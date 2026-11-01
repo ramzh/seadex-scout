@@ -306,9 +306,32 @@ func NormalizeGroup(group string) string {
 	if g == "" {
 		return noGroupNormalized
 	}
-	g = stripGroupDecoration(g)
+	for {
+		next := stripCodecPrefix(stripGroupDecoration(g))
+		if next == g {
+			break
+		}
+		g = next
+	}
 	if noGroupVariants[g] {
 		return noGroupNormalized
+	}
+	return g
+}
+
+// codecPrefixes are encode tags the arrs fold into the group when a release name
+// ends "x264-Hi10P-Mehul": Sonarr records "Hi10P-Mehul" while SeaDex labels the
+// same files "Mehul" (and never writes the prefix: 0 such labels on releases.moe).
+var codecPrefixes = []string{"hi10p-", "hi10-", "hi444pp-", "10bit-", "x264-", "x265-", "hevc-", "avc-"}
+
+// stripCodecPrefix drops one leading codec tag joined by '-', keeping the label
+// when nothing named would remain. Inner hyphens of real names (erai-raws,
+// bunny-apocalypse) never start with a codec tag, so they are untouched.
+func stripCodecPrefix(g string) string {
+	for _, p := range codecPrefixes {
+		if rest, ok := strings.CutPrefix(g, p); ok && hasLetterOrNumber(rest) {
+			return rest
+		}
 	}
 	return g
 }

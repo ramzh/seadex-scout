@@ -360,7 +360,7 @@ func TestNormalizeGroupKeepsRealNames(t *testing.T) {
 		"SubsPlus+", "cal@izuAnime", "Team ONIBE", "Yūrei", "7³ACG", "μtw-Kaleido",
 		"Shirσ", "GetNasu'd", "No.0.Is.No.1.In.My.Heart", "Delicio.us",
 		"VCB-Studio | Underwater", "Anime-Koi & MTBB", "Lv.99 Villain",
-		"Foo(BD)", "(BD)", "Foo (a (b))", "a (b) c)", "-__-'", "_", "Hi10p-Meakes",
+		"Foo(BD)", "(BD)", "Foo (a (b))", "a (b) c)", "-__-'", "_",
 	}
 	for _, label := range labels {
 		if got, want := NormalizeGroup(label), strings.ToLower(label); got != want {
@@ -601,5 +601,28 @@ func TestClassifyReadsTheSharedNameVocabulary(t *testing.T) {
 				t.Errorf("Classify(%+q) resolution = %q, want %q", tc.in, got.Resolution, tc.wantRes)
 			}
 		})
+	}
+}
+
+// TestNormalizeGroupStripsCodecPrefix pins the library-side shape Sonarr records
+// for "x264-Hi10P-Mehul" release names: the codec tag is dropped so the group
+// reads as SeaDex labels it, while a label that is only a tag keeps its spelling.
+func TestNormalizeGroupStripsCodecPrefix(t *testing.T) {
+	tests := []struct{ label, want string }{
+		{label: "Hi10P-Mehul", want: "mehul"},
+		{label: "Hi10p-Legion", want: "legion"},
+		{label: "Hi10p-Meakes", want: "meakes"},
+		{label: "x265-Vodes", want: "vodes"},
+		{label: "Erai-raws", want: "erai-raws"},
+		{label: "Bunny-Apocalypse", want: "bunny-apocalypse"},
+		{label: "Hi10P-", want: "hi10p"},
+		{label: "Hi10P-x265-Vodes", want: "vodes"},
+		{label: "hi10p--Vodes", want: "vodes"},
+		{label: "Hi10P-NOGRP", want: NormalizeGroup(NoGroup)},
+	}
+	for _, tc := range tests {
+		if got := NormalizeGroup(tc.label); got != tc.want {
+			t.Errorf("NormalizeGroup(%q) = %q, want %q", tc.label, got, tc.want)
+		}
 	}
 }
