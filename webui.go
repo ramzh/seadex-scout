@@ -40,6 +40,10 @@ const (
 	envNtfyUnmonitored = "SEADEX_SCOUT_NTFY_UNMONITORED"
 	envDashboardURL    = "SEADEX_SCOUT_DASHBOARD_URL"
 
+	// envMinScore is the custom format score a SeaDex best file reaches; the
+	// Library tab lists files below it.
+	envMinScore = "SEADEX_SCOUT_MIN_SCORE"
+
 	envQbitURL            = "SEADEX_SCOUT_QBIT_URL"
 	envQbitUsername       = "SEADEX_SCOUT_QBIT_USERNAME"
 	envQbitPassword       = "SEADEX_SCOUT_QBIT_PASSWORD"
@@ -150,6 +154,10 @@ func (w *webUIRuntime) start(ctx context.Context, cfg *config.Config) func() {
 
 	notifier := startNtfy(ctx, w.store, log)
 
+	minScore, _ := strconv.Atoi(strings.TrimSpace(os.Getenv(envMinScore)))
+	library := webui.NewLibrary(sonarr, radarr, minScore, w.store, log)
+	go library.Run(ctx)
+
 	srv := webui.NewServer(webui.Options{
 		Addr:      w.addr,
 		Username:  cmp.Or(os.Getenv(envWebUIUsername), "admin"),
@@ -161,6 +169,8 @@ func (w *webUIRuntime) start(ctx context.Context, cfg *config.Config) func() {
 		Qbit:      newQbit(log),
 		Usenet:    newUsenet(log),
 		Refresher: webui.NewLibraryRefresher(ctx, refreshAll, w.store),
+		Library:   library,
+		Ctx:       ctx,
 		Log:       log,
 	})
 

@@ -1,0 +1,165 @@
+package webui
+
+import (
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// fakeSonarr is a Sonarr 5 that answers the calls the library actions make
+// and records what was written.
+type fakeSonarr struct {
+	files   []map[string]any
+	queue   []map[string]any
+	history []map[string]any
+	rows    []map[string]any
+	bulk    []map[string]any
+	cmds    []map[string]any
+}
+
+func (f *fakeSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	enc := json.NewEncoder(w)
+	switch {
+	case r.URL.Path == "/api/v5/system/status":
+		_ = enc.Encode(map[string]string{"version": "5.0.0"})
+	case r.URL.Path == "/api/v5/episodefile" && r.Method == http.MethodGet:
+		_ = enc.Encode(f.files)
+	case r.URL.Path == "/api/v5/episodefile/bulk" && r.Method == http.MethodPut:
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &f.bulk)
+		w.WriteHeader(http.StatusAccepted)
+	case r.URL.Path == "/api/v5/queue":
+		_ = enc.Encode(map[string]any{"records": f.queue})
+	case r.URL.Path == "/api/v5/history":
+		_ = enc.Encode(map[string]any{"records": f.history})
+	case r.URL.Path == "/api/v5/manualimport":
+		_ = enc.Encode(f.rows)
+	case r.URL.Path == "/api/v5/command" && r.Method == http.MethodPost:
+		var cmd map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&cmd)
+		f.cmds = append(f.cmds, cmd)
+		_ = enc.Encode(map[string]int{"id": 42})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func newTestLibrary(t *testing.T, fake *fakeSonarr, findings ...Line) *Library {
+	t.Helper()
+	srv := httptest.NewServer(fake)
+	t.Cleanup(srv.Close)
+	st := NewStore("")
+	st.s.Findings = findings
+	return NewLibrary(Arr{URL: srv.URL, APIKey: "k"}, Arr{}, 0, st, slog.New(slog.DiscardHandler))
+}
+
+func finding(status, groups string, season int) Line {
+	return Line{Msg: "library holds the SeaDex best", Attrs: map[string]any{
+		"arr": "sonarr", "arr_id": int64(7), "scope": "season", "season": int64(season),
+		"status": status, "recommended_groups": groups,
+	}}
+}
+
+func TestFixFlagsFlagsOnlyTheBestGroupsLowFiles(t *testing.T) {
+	fake := &fakeSonarr{files: []map[string]any{
+		{"id": 1, "seasonNumber": 1, "releaseGroup": "NAN0", "customFormatScore": 0, "indexerFlags": 4},
+		{"id": 2, "seasonNumber": 1, "releaseGroup": "Other", "customFormatScore": 0, "indexerFlags": 0},
+		{"id": 3, "seasonNumber": 1, "releaseGroup": "nan0", "customFormatScore": 5000, "indexerFlags": 80},
+		{"id": 4, "seasonNumber": 2, "releaseGroup": "NAN0", "customFormatScore": 0, "indexerFlags": 0},
+	}}
+	lib := newTestLibrary(t, fake, finding("at_best", "nan0", 1))
+	res, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Fixed != 1 || res.AlreadyOK != 1 || res.Skipped != 1 {
+		t.Fatalf("result = %+v, want 1 fixed, 1 already ok, 1 skipped", res)
+	}
+	if len(fake.bulk) != 1 || fake.bulk[0]["id"] != float64(1) || fake.bulk[0]["indexerFlags"] != float64(4|sonarrBestFlags) {
+		t.Fatalf("bulk update = %v, want file 1 with its flags plus Freeleech25+Scene", fake.bulk)
+	}
+}
+
+func TestFixFlagsRefusesWithoutABestFinding(t *testing.T) {
+	fake := &fakeSonarr{}
+	lib := newTestLibrary(t, fake, finding("better_release", "nan0", 1))
+	if _, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1}); err == nil {
+		t.Fatal("FixFlags flagged files the scout does not say hold the best")
+	}
+	if _, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 8, Season: 1}); err == nil {
+		t.Fatal("FixFlags flagged files with no finding at all")
+	}
+	if fake.bulk != nil {
+		t.Fatalf("bulk update sent: %v", fake.bulk)
+	}
+}
+
+func TestImportQueuedTakesOnlyLowEpisodesAndGrabFlags(t *testing.T) {
+	ep := func(id, file int) map[string]any { return map[string]any{"id": id, "episodeFileId": file} }
+	fake := &fakeSonarr{
+		queue: []map[string]any{{"id": 5, "seriesId": 7, "downloadId": "ABC", "outputPath": "/data/pack", "sizeLeft": 0}},
+		history: []map[string]any{
+			{"eventType": "grabbed", "data": map[string]string{"indexerFlags": "Scene, Freeleech25"}},
+		},
+		files: []map[string]any{
+			{"id": 100, "customFormatScore": 5000},
+			{"id": 101, "customFormatScore": 0},
+		},
+		rows: []map[string]any{
+			{"path": "/data/pack/01.mkv", "series": map[string]int{"id": 7}, "episodes": []any{ep(1, 100)},
+				"rejections": []any{map[string]string{"reason": "Not a Custom Format upgrade"}}},
+			{"path": "/data/pack/02.mkv", "series": map[string]int{"id": 7}, "episodes": []any{ep(2, 101)},
+				"rejections": []any{map[string]string{"reason": "Episode 1x02 was unexpected considering the folder name"}}},
+			{"path": "/data/pack/03.mkv", "series": map[string]int{"id": 7}, "episodes": []any{ep(3, 0)}},
+			{"path": "/data/pack/04.mkv", "series": map[string]int{"id": 7}, "episodes": []any{ep(4, 101)},
+				"rejections": []any{map[string]string{"reason": "Sample"}}},
+			{"path": "/data/pack/NCOP.mkv"},
+		},
+	}
+	lib := newTestLibrary(t, fake)
+	res, err := lib.ImportQueued(t.Context(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Files != 2 || res.Skipped != 3 || res.IndexerFlags != sonarrBestFlags || res.Command != 42 {
+		t.Fatalf("result = %+v, want 2 files, 3 skipped, flags %d, command 42", res, sonarrBestFlags)
+	}
+	files := fake.cmds[0]["files"].([]any)
+	var paths []string
+	for _, f := range files {
+		m := f.(map[string]any)
+		paths = append(paths, m["path"].(string))
+		if m["indexerFlags"] != float64(sonarrBestFlags) {
+			t.Errorf("%s imported with flags %v, want the grab's", m["path"], m["indexerFlags"])
+		}
+	}
+	if got := strings.Join(paths, ","); got != "/data/pack/02.mkv,/data/pack/03.mkv" {
+		t.Fatalf("imported %s, want episodes 2 and 3 only", got)
+	}
+	if fake.cmds[0]["importMode"] != "auto" {
+		t.Fatalf("importMode = %v, want auto (hardlink)", fake.cmds[0]["importMode"])
+	}
+}
+
+func TestSearchPicksTheCommand(t *testing.T) {
+	fake := &fakeSonarr{}
+	lib := newTestLibrary(t, fake)
+	for _, tc := range []struct {
+		season int
+		want   string
+	}{{2, "SeasonSearch"}, {-1, "SeriesSearch"}} {
+		if _, err := lib.Search(t.Context(), Target{Arr: "sonarr", ID: 7, Season: tc.season}); err != nil {
+			t.Fatal(err)
+		}
+		if got := fake.cmds[len(fake.cmds)-1]["name"]; got != tc.want {
+			t.Errorf("season %d sent %v, want %s", tc.season, got, tc.want)
+		}
+	}
+	if _, err := lib.Search(t.Context(), Target{Arr: "radarr", ID: 1}); err == nil {
+		t.Error("search on an arr that is not set up succeeded")
+	}
+}

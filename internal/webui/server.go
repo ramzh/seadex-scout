@@ -39,7 +39,11 @@ type Options struct {
 	Usenet *Usenet
 	// Refresher runs the local library refresh; nil when it cannot run.
 	Refresher *LibraryRefresher
-	Log       *slog.Logger
+	// Library acts on Sonarr and Radarr: search, flag fixes, scores, queue.
+	Library *Library
+	// Ctx bounds background jobs the page starts (the score scan).
+	Ctx context.Context
+	Log *slog.Logger
 }
 
 // NewServer returns the dashboard's HTTP server, not yet listening.
@@ -266,6 +270,7 @@ func NewServer(o Options) *http.Server {
 		}
 		writeJSON(w, map[string]bool{"sent": true})
 	})
+	libraryRoutes(app, o)
 	mux.Handle("/", basicAuth(o.Username, o.Password, app))
 
 	return &http.Server{
