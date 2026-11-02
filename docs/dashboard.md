@@ -78,6 +78,17 @@ The scout reads your whole Sonarr and Radarr library only during the daily full 
 - The daily full check still runs on its own schedule. It is what picks up new SeaDex entries and changes.
 - It logs `local library refresh started` and `local library refresh complete`, not `reconcile started` and `reconcile complete`, so it is not counted as a full check. It does not rebuild the Torznab feed or count as a SeaDex read for outage tracking.
 
+## Library and Queue tabs
+
+These tabs act on Sonarr and Radarr directly, through the URLs and API keys in `config.yaml`.
+
+- **Library** lists every monitored season and film whose files score below the minimum custom format score (`SEADEX_SCOUT_MIN_SCORE`, default `5000`, the score a SeaDex best grab reaches with the custom formats in [the indexer guide](torznab-indexer.md)). The scan runs a minute after the start and every 6 hours, or on **↻ Scan scores**. Each row is joined with the scout's finding:
+  - **Fix flags** shows where the scout says you already hold the SeaDex best. It gives that season's files from the best group the `Freeleech25` + `Scene` flags a best grab carries (Radarr: `G Freeleech25` + `G Scene`), so the custom format scores them. Files from any other group are left alone, and the server takes the groups from its own finding, not from the page.
+  - **Search** shows where SeaDex lists a better release, and starts a season, series or movie search.
+  - The buttons above the table do the same for every row shown. Bulk searches go one a minute.
+- **Queue** lists Sonarr's and Radarr's queues. **Import** (Sonarr) previews, then imports a finished download as hardlinks, the way Manual Import does. It takes only files matched to episodes with no file or a file below the minimum, overrides only the "episode was unexpected" check, and gives the files the grab's indexer flags, which Manual Import drops. **Remove** drops a download from the queue without touching the torrent or blocklisting it.
+- Overview rows get the same **Search** and **Fix flags** buttons and a badge with their low-score count. **ⓘ** beside a title opens everything about that series.
+
 ## Notifications
 
 The container can send notifications to [ntfy](https://ntfy.sh) by itself, without Loki or Alertmanager. Set `SEADEX_SCOUT_NTFY_URL` to your topic's full address, such as `https://ntfy.sh/my-seadex-topic` or the address of your own ntfy server, and subscribe to that topic in the ntfy app. On the public server, anyone who knows a topic name can read it, so pick a long, hard-to-guess name or protect it with an access token.
