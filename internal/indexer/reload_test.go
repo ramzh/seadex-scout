@@ -57,6 +57,12 @@ func TestReloadWarnsOnceOnMissingSnapshotAndRecovers(t *testing.T) {
 			{Title: "second", GUID: "https://nyaa.si/view/2", Key: "nyaa:2"},
 		},
 	})
+	// The rewrite can land in the same coarse kernel timestamp tick on a reused
+	// inode, which the identity check rightly calls unchanged; move mtime on.
+	future := time.Now().Add(time.Minute)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatalf("chtimes snapshot: %v", err)
+	}
 	ix.cache.loader.refresh(t.Context())
 	if got := rec.Count("indexer feed snapshot reappeared"); got != 1 {
 		t.Errorf("reappearance logged %d times, want 1; log output:\n%s", got, strings.Join(rec.Messages(), "\n"))
