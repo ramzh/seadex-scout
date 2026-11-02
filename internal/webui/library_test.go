@@ -212,3 +212,24 @@ func TestFixFlagsFlagsFilesImportedFromABestTorrent(t *testing.T) {
 		t.Fatalf("flagged without a finding or a proof: %v, %v", err, fake.bulk)
 	}
 }
+
+func TestBestIndexTrustsOnlyPrivateAnimeBytesComments(t *testing.T) {
+	qb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"hash": "AB1", "private": true, "comment": "https://animebytes.tv/torrent/11/group"},
+			{"hash": "PUB", "private": false, "comment": "https://animebytes.tv/torrent/11/group"},
+			{"hash": "ODD", "private": true, "comment": "see https://animebytes.tv/torrent/11/group"},
+		})
+	}))
+	t.Cleanup(qb.Close)
+	lib := newTestLibrary(t, &fakeSonarr{})
+	lib.Qbit, _ = NewQbit(QbitConfig{URL: qb.URL})
+	lib.Best = func(context.Context) (map[string][]int, error) { return map[string][]int{"ab:11": {1}}, nil }
+	idx, err := lib.bestIndex(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := idx["ab1"]; !ok || len(idx) != 1 {
+		t.Fatalf("index = %v, want only the private AnimeBytes torrent", idx)
+	}
+}

@@ -395,7 +395,8 @@ func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 
 // abTorrent finds the AnimeBytes torrent id in the comment qBittorrent keeps
 // for an AnimeBytes download ("https://animebytes.tv/torrent/368375/group").
-var abTorrent = regexp.MustCompile(`animebytes\.tv/torrent/(\d+)`)
+// Only a private torrent is trusted: a public one could carry any comment.
+var abTorrent = regexp.MustCompile(`^https://animebytes\.tv/torrent/(\d+)(?:/|$)`)
 
 // bestIndex maps the info hash of every SeaDex best release the scout knows
 // to the TVDB ids of the entries that call it best. Nyaa releases carry their
@@ -423,7 +424,7 @@ func (l *Library) bestIndex(ctx context.Context) (map[string][]int, error) {
 		return idx, err
 	}
 	for _, t := range torrents {
-		if m := abTorrent.FindStringSubmatch(t.Comment); m != nil {
+		if m := abTorrent.FindStringSubmatch(strings.TrimSpace(t.Comment)); m != nil && t.Private {
 			if v, ok := best["ab:"+m[1]]; ok {
 				idx[strings.ToLower(t.Hash)] = v
 			}
