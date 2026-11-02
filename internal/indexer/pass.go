@@ -229,6 +229,9 @@ func ownershipOf(entries []seadex.Entry, infoFor EntryInfoFunc) map[string][]own
 				IsBest:  t.IsBest,
 				NonFilm: info.Kind != KindMovie,
 			}
+			if r.NonFilm {
+				r.Range = rangeLabel(t, &info)
+			}
 			r.SonarrTitle, r.TwinFirst, r.TwinLast = twinFor(t, &info)
 			if r.SonarrTitle != "" {
 				r.TwinSeries, r.URL, r.Size = strings.TrimSpace(info.SeriesTitle), classify.PublishURL(t), payload.TotalSize(t.Files)

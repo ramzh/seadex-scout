@@ -212,13 +212,30 @@ func episodeMarker(t *seadex.Torrent, meta *EntryInfo) string {
 		// markerless or absolute "- NN" marker under a POSITIVE resolved
 		// season carries no season token, so it passes through unchanged
 		// (relabelEpisodeSeason's no-token arm).
-		return relabelEpisodeSeason(marker, meta)
+		// A multi-file release the census cannot call a pack (bare episode
+		// numbers) can still end up with a bare season label.
+		return withEpisodeRange(t, meta, relabelEpisodeSeason(marker, meta))
 	}
-	label, ok := packSeasonLabel(t, meta)
-	if ok {
-		label += packEpisodeRange(t, meta, label)
+	label, _ := packSeasonLabel(t, meta)
+	return withEpisodeRange(t, meta, label)
+}
+
+// withEpisodeRange appends packEpisodeRange to a marker that is a bare season
+// label, and returns any other marker unchanged.
+// A release with no marker at all gets the resolved season with its range,
+// when a range can be proven, and stays markerless otherwise.
+func withEpisodeRange(t *seadex.Torrent, meta *EntryInfo, marker string) string {
+	if marker == "" && meta.SeasonKnown && meta.Season > 0 {
+		label := seasonLabel(meta.Season)
+		if r := packEpisodeRange(t, meta, label); r != "" {
+			return label + r
+		}
+		return ""
 	}
-	return label
+	if len(marker) != 3 || marker[0] != 'S' {
+		return marker
+	}
+	return marker + packEpisodeRange(t, meta, marker)
 }
 
 // packEpisodeRange is the "E01-E51" suffix a pack's season label gets when
@@ -234,6 +251,9 @@ func packEpisodeRange(t *seadex.Torrent, meta *EntryInfo, label string) string {
 		return ""
 	}
 	first, last, ok := absoluteEpisodeSpan(t.Files)
+	if !ok {
+		first, last, ok = bareNumberSpan(t.Files)
+	}
 	if !ok || first < 1 || last > len(run) || first > last {
 		return ""
 	}
@@ -290,6 +310,78 @@ func absoluteEpisodeNumber(marker string) (int, bool) {
 // the episode twin of seasonLabel, so both halves of the marker wire format
 // are single-homed together.
 func episodeLabel(e int) string { return fmt.Sprintf("E%02d", e) }
+
+// rangeMarker is a season label with an episode or episode range.
+var rangeMarker = regexp.MustCompile(`^S(\d{2})E\d{2,4}(?:-E\d{2,4})?$`)
+
+// rangeLabel is the label episodeMarker gives a release when it carries an
+// episode range, "" when it gives a bare season label or none.
+func rangeLabel(t *seadex.Torrent, meta *EntryInfo) string {
+	if m := episodeMarker(t, meta); rangeMarker.MatchString(m) {
+		return m
+	}
+	return ""
+}
+
+// bareSeason matches a bare season token in a tracker's own release title:
+// "S01" not followed by an episode.
+var bareSeason = regexp.MustCompile(`\bS(\d{2})\b(?:[^E\d]|$)`)
+
+// withRange swaps the one bare season token of title for label when it names
+// label's season, so Sonarr reads the episodes the release holds instead of
+// the whole season. A title with no such token, or several, is unchanged.
+func withRange(title, label string) string {
+	m := rangeMarker.FindStringSubmatch(label)
+	if m == nil {
+		return title
+	}
+	hits := bareSeason.FindAllStringSubmatchIndex(title, -1)
+	if len(hits) != 1 || title[hits[0][2]:hits[0][3]] != m[1] {
+		return title
+	}
+	return title[:hits[0][0]] + label + title[hits[0][3]:]
+}
+
+// bareNumber is an episode number written without the " - " separator, right
+// before the release's bracketed tags: "Black Clover 017 (BD 1080p ...)".
+var bareNumber = regexp.MustCompile(`\s(\d{2,4})(?:v\d+)?\s*[\[(]`)
+
+// bareExtra marks a file that is not an episode: creditless openings and
+// endings, previews, menus and the like.
+var bareExtra = regexp.MustCompile(`(?i)(^|[/\s_\[(])(NC|NCOP|NCED|OP|ED|PV|CM|Preview|Menu|Extras?|Bonus|SP|OVA|Special)[\s_\d)\]]`)
+
+// bareNumberSpan is packEpisodeRange's fallback for packs whose files carry a
+// bare episode number. Every video file outside extras must carry one, and
+// the numbers must be distinct and contiguous, or ok is false.
+func bareNumberSpan(files []seadex.File) (first, last int, ok bool) {
+	seen := map[int]bool{}
+	for _, f := range files {
+		name := f.Name
+		if !strings.HasSuffix(strings.ToLower(name), ".mkv") && !strings.HasSuffix(strings.ToLower(name), ".mp4") {
+			continue
+		}
+		if bareExtra.MatchString(name) {
+			continue
+		}
+		m := bareNumber.FindStringSubmatch(name[strings.LastIndex(name, "/")+1:])
+		if m == nil {
+			return 0, 0, false
+		}
+		n, _ := strconv.Atoi(m[1])
+		if seen[n] {
+			return 0, 0, false
+		}
+		seen[n] = true
+		if first == 0 || n < first {
+			first = n
+		}
+		last = max(last, n)
+	}
+	if len(seen) < 2 || last-first+1 != len(seen) {
+		return 0, 0, false
+	}
+	return first, last, true
+}
 
 // packSeasonLabel resolves the season token a PACK is labeled with, in the one
 // precedence both title paths share: the entry's resolved season outvotes the

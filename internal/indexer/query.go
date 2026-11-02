@@ -54,6 +54,7 @@ type curation struct {
 // where an agreeing sibling signal would override the contradiction.
 type curatedSignal struct {
 	twin    twinVote
+	rng     twinVote // the Range label, folded like the twin title
 	vote    tvdbVote
 	isBest  bool
 	nonFilm bool
@@ -73,6 +74,7 @@ func pairKey(hash, key string) string { return keyenc.Join(hash, key) }
 // twin votes into the item's. Bookkeeping only; lookup owns policy.
 type curationMatch struct {
 	twin    twinVote
+	rng     twinVote
 	vote    tvdbVote
 	isBest  bool
 	nonFilm bool
@@ -93,6 +95,7 @@ func (m *curationMatch) accept(sig curatedSignal, ok bool) bool {
 	m.nonFilm = m.nonFilm || sig.nonFilm
 	m.vote.merge(sig.vote)
 	m.twin.merge(sig.twin)
+	m.rng.merge(sig.rng)
 	return true
 }
 
@@ -104,6 +107,7 @@ func (m *curationMatch) accept(sig curatedSignal, ok bool) bool {
 // title ("" likewise).
 type curationVerdict struct {
 	sonarrTitle string
+	rangeLabel  string
 	tvdbID      int
 	isBest      bool
 	nonFilm     bool
@@ -149,6 +153,7 @@ func (c *curation) lookup(scope, hash, infoURL, guid string) curationVerdict {
 	return curationVerdict{
 		isBest: match.isBest, matched: match.matched, nonFilm: match.nonFilm,
 		tvdbID: match.vote.resolve(), sonarrTitle: match.twin.resolve(),
+		rangeLabel: match.rng.resolve(),
 	}
 }
 
@@ -518,6 +523,7 @@ func markAndDedupe(raw []item, set *curation, scope string, class requester) (ou
 		// reaches a curation older than the 14-day journal, which is exactly what a
 		// Wanted -> Cutoff Unmet search walks.
 		it.TvdbID = verdict.tvdbID
+		it.Title = withRange(it.Title, verdict.rangeLabel)
 		id := it.guid()
 		if _, dup := seen[id]; dup {
 			continue

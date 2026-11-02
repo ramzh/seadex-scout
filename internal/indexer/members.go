@@ -136,6 +136,11 @@ type ownedRelease struct {
 	// polarity is the fail-safe one: a record written without the field reads
 	// as a film. Re-derived every pass, so nothing accumulates.
 	NonFilm bool `json:"non_film,omitempty"`
+	// Range is the season-and-episodes label this owner gives a release that
+	// holds only part of what its bare season label promises ("S01E01-E51",
+	// rangeLabel), "" otherwise. A search result's bare season token is
+	// swapped for it (withRange). Re-derived every pass.
+	Range string `json:"range,omitempty"`
 }
 
 // dropUnservableTwin clears the catalogue fields of a persisted record that
@@ -228,6 +233,7 @@ func foldOwnerIntoSignal(acc curatedSignal, r *ownedRelease) curatedSignal {
 	acc.nonFilm = acc.nonFilm || r.NonFilm
 	acc.vote.add(r.TvdbID)
 	acc.twin.add(r.SonarrTitle)
+	acc.rng.add(r.Range)
 	return acc
 }
 
