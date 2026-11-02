@@ -95,14 +95,19 @@ func libraryRoutes(app *http.ServeMux, o Options) {
 	})
 	app.HandleFunc("POST /api/queue/import", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			ID int `json:"id"`
+			ID  int  `json:"id"`
+			Dry bool `json:"dry"`
 		}
 		if !ready(w, r, true) || !decode(w, r, &in) {
 			return
 		}
-		res, err := o.Library.ImportQueued(r.Context(), in.ID)
+		res, err := o.Library.ImportQueued(r.Context(), in.ID, in.Dry)
 		if err != nil {
 			fail(w, "import", err)
+			return
+		}
+		if in.Dry {
+			writeJSON(w, res)
 			return
 		}
 		o.Log.Info("queued download imported from the dashboard", "queue_id", in.ID, "files", res.Files,

@@ -53,6 +53,13 @@ type Mapping struct {
 	// landing names, when every entry episode lands there, at least one
 	// landing is stated, and a default among them withholds Specials.
 	SpecialEpisode int `json:"special_episode,omitempty"`
+	// EpisodeRun is the TVDB episode each entry episode 1..N lands on in
+	// season EpisodeRunSeason, in entry order, when every entry episode lands
+	// on exactly one episode of one positive season. Unlike Episodes it also
+	// holds for a mapping that rests on the default season, so the feed can
+	// label a pack that covers part of a long season with its episode range.
+	EpisodeRun       []int `json:"episode_run,omitempty"`
+	EpisodeRunSeason int   `json:"episode_run_season,omitempty"`
 }
 
 func (m *Mapping) empty() bool {
@@ -274,6 +281,11 @@ func (v *tvdbView) mapping() Mapping {
 	}
 	positive := v.positive()
 	_, onZero := v.landings[0]
+	if len(positive) == 1 && !onZero && v.nowhere == 0 {
+		if run := v.episodeRun(positive[0]); run != nil {
+			m.EpisodeRun, m.EpisodeRunSeason = run, positive[0]
+		}
+	}
 	switch {
 	case len(positive) == 0 && onZero && !v.defaulted:
 		m.Specials, _ = v.targets(0)
@@ -324,6 +336,37 @@ func (v *tvdbView) ranges() []SeasonRange {
 
 // targets is every TVDB episode of season on the view's series the entry's
 // episodes land on, ascending, and whether one of those landings is stated.
+// episodeRun is the TVDB episode each entry episode lands on in season, in
+// entry order, when the entry's episodes are 1..N and each lands on exactly
+// one episode there; nil otherwise.
+func (v *tvdbView) episodeRun(season int) []int {
+	eps := slices.Clone(v.episodes)
+	slices.SortFunc(eps, func(a, b mapread.EntryEpisode) int { return a.Number - b.Number })
+	run := make([]int, 0, len(eps))
+	for i, ep := range eps {
+		if ep.Number != i+1 {
+			return nil
+		}
+		var at []int
+		for _, ref := range ep.Refs {
+			st, ok := v.x.Episode(ref.Ref)
+			if !ok || st.TVDB == nil {
+				continue
+			}
+			for _, p := range st.TVDB.Placements {
+				if p.Season == season && !slices.Contains(at, p.Episode) {
+					at = append(at, p.Episode)
+				}
+			}
+		}
+		if len(at) != 1 {
+			return nil
+		}
+		run = append(run, at[0])
+	}
+	return run
+}
+
 func (v *tvdbView) targets(season int) (episodes []int, stated bool) {
 	seen := make(map[int]struct{})
 	for _, ep := range v.episodes {

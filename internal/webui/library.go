@@ -733,7 +733,8 @@ func importableRejection(reason string) bool {
 // packs larger than their grab's name, and only for episodes with no file or
 // a file below the minimum score. The files get the grab's indexer flags,
 // which Manual Import otherwise drops.
-func (l *Library) ImportQueued(ctx context.Context, id int) (ImportResult, error) {
+// With dry set it only reports what it would import.
+func (l *Library) ImportQueued(ctx context.Context, id int, dry bool) (ImportResult, error) {
 	var res ImportResult
 	a, err := l.arr("sonarr")
 	if err != nil {
@@ -816,7 +817,7 @@ func (l *Library) ImportQueued(ctx context.Context, id int) (ImportResult, error
 	}
 	slices.Sort(res.Reasons)
 	res.Files = len(files)
-	if len(files) == 0 {
+	if len(files) == 0 || dry {
 		return res, nil
 	}
 	var cmd struct {

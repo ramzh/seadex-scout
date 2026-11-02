@@ -275,8 +275,22 @@ function renderQueue() {
 
 async function importQueued(btn, it) {
   btn.disabled = true;
-  btn.textContent = "Importing…";
+  btn.textContent = "Checking…";
   try {
+    const p = await postJSON("api/queue/import", { id: it.id, dry: true });
+    const skipped = (p.reasons || []).map((x) => "  skip " + x).join("\n");
+    if (!p.files) {
+      btn.textContent = "Nothing to import";
+      btn.title = skipped || "Every file is matched and already scores high enough";
+      btn.disabled = false;
+      return;
+    }
+    if (!confirm(`Import ${p.files} files from "${it.title}" as hardlinks, with indexer flags ${p.indexer_flags}?` + (skipped ? `\n\n${skipped}` : ""))) {
+      btn.textContent = "Import";
+      btn.disabled = false;
+      return;
+    }
+    btn.textContent = "Importing…";
     const r = await postJSON("api/queue/import", { id: it.id });
     btn.textContent = r.files ? `Importing ${r.files} ✓` : "Nothing to import";
     btn.classList.add("done");

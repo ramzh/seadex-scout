@@ -126,6 +126,9 @@ func applyEpisodeFacts(idx *mapping.Index, rec *mapping.Record, film bool, li *m
 			info.Seasons[i] = indexer.SeasonRange{Season: r.Season, First: r.First, Last: r.Last}
 		}
 	}
+	if len(m.EpisodeRun) > 0 && !film {
+		info.EpisodeRun, info.EpisodeRunSeason = m.EpisodeRun, m.EpisodeRunSeason
+	}
 	run, entryEpisodes := m.SpecialRun()
 	if len(run) == 0 {
 		return

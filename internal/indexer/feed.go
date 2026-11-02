@@ -63,6 +63,11 @@ type EntryInfo struct {
 	// fact, and a stored render carried without a fresh one loses its twin, or
 	// leaves the journal when its title is not a film's (applyStoredOrder).
 	NonAiredOrder bool
+	// EpisodeRun is the TVDB episode each entry episode 1..N lands on in
+	// season EpisodeRunSeason (mapping.Mapping.EpisodeRun); nil when the map
+	// does not place the entry one episode at a time on one season.
+	EpisodeRun       []int
+	EpisodeRunSeason int
 }
 
 // MediaKind is what the producer's typing says an entry is. KindUnknown means
@@ -209,8 +214,40 @@ func episodeMarker(t *seadex.Torrent, meta *EntryInfo) string {
 		// (relabelEpisodeSeason's no-token arm).
 		return relabelEpisodeSeason(marker, meta)
 	}
-	label, _ := packSeasonLabel(t, meta)
+	label, ok := packSeasonLabel(t, meta)
+	if ok {
+		label += packEpisodeRange(t, meta, label)
+	}
 	return label
+}
+
+// packEpisodeRange is the "E01-E51" suffix a pack's season label gets when
+// the pack holds only part of what Sonarr would expect from the bare season:
+// a pack with fewer episodes than its entry, or an entry that starts later
+// in the TVDB season than its first episode. Without it Sonarr expects the
+// whole season from the grab and leaves the import waiting ("episode was
+// unexpected"). It needs the map's one-to-one episode run on the labeled
+// season and a contiguous absolute span; anything else keeps the bare label.
+func packEpisodeRange(t *seadex.Torrent, meta *EntryInfo, label string) string {
+	run := meta.EpisodeRun
+	if len(run) == 0 || label != seasonLabel(meta.EpisodeRunSeason) {
+		return ""
+	}
+	first, last, ok := absoluteEpisodeSpan(t.Files)
+	if !ok || first < 1 || last > len(run) || first > last {
+		return ""
+	}
+	from, to := run[first-1], run[last-1]
+	if to-from != last-first {
+		return "" // the map skips or repeats TVDB episodes inside the span
+	}
+	if first == 1 && last == len(run) && from == 1 {
+		return "" // the whole entry, from the season's first episode
+	}
+	if from == to {
+		return episodeLabel(from)
+	}
+	return episodeLabel(from) + "-" + episodeLabel(to)
 }
 
 // specialsEpisodeMarker rewrites a single release's ABSOLUTE marker ("- 07")

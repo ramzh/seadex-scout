@@ -121,7 +121,10 @@ func TestImportQueuedTakesOnlyLowEpisodesAndGrabFlags(t *testing.T) {
 		},
 	}
 	lib := newTestLibrary(t, fake)
-	res, err := lib.ImportQueued(t.Context(), 5)
+	if preview, err := lib.ImportQueued(t.Context(), 5, true); err != nil || preview.Files != 2 || len(fake.cmds) != 0 {
+		t.Fatalf("dry run = %+v, %v, commands %v; want 2 files and nothing sent", preview, err, fake.cmds)
+	}
+	res, err := lib.ImportQueued(t.Context(), 5, false)
 	if err != nil {
 		t.Fatal(err)
 	}
