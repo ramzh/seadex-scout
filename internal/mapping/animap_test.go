@@ -576,3 +576,32 @@ func TestMapping_SpecialRun(t *testing.T) {
 		})
 	}
 }
+
+// TestProject_episodeRun pins the per-episode TVDB run the feed labels
+// partial packs with: stated and default placements both give it, an
+// episode landing nowhere or on season 0 withholds it.
+func TestProject_episodeRun(t *testing.T) {
+	const series = 500
+	for _, tc := range []struct {
+		name     string
+		episodes int
+		runs     []mapread.Run
+		want     []int
+		season   int
+	}{
+		{"stated", 3, []mapread.Run{regular(1, 3, targets(at(2, 5)))}, []int{5, 6, 7}, 2},
+		{"by default", 3, []mapread.Run{regular(1, 3, targets(dflt(1, 1)))}, []int{1, 2, 3}, 1},
+		{"a later cour by default", 2, []mapread.Run{regular(1, 2, targets(dflt(1, 13)))}, []int{13, 14}, 1},
+		{"an episode landing nowhere", 3, []mapread.Run{regular(1, 2, targets(at(1, 1)))}, nil, 0},
+		{"one episode on season 0", 3, []mapread.Run{regular(1, 2, targets(at(1, 1))), regular(3, 3, targets(at(0, 4)))}, nil, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := mapread.Anime{AniDBID: 10, Type: "TV", TVDBID: series, Last: mapread.Last{Regular: tc.episodes}, Episodes: tc.runs}
+			e := mapread.Entry{AniListID: 1, Type: "TV", Parts: []mapread.Part{{AniDBID: 10, Kind: mapread.Regular}}}
+			_, got := projected(t, encode(t, document([]mapread.Anime{a}, []mapread.Entry{e})))
+			if m := got[1].m; !slices.Equal(m.EpisodeRun, tc.want) || m.EpisodeRunSeason != tc.season {
+				t.Errorf("EpisodeRun = %v on season %d, want %v on %d", m.EpisodeRun, m.EpisodeRunSeason, tc.want, tc.season)
+			}
+		})
+	}
+}

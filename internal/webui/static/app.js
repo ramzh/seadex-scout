@@ -645,7 +645,8 @@ function findingRow(f, now) {
     ? el("td", {}, withNotes(link(entry, groupWithRevision(a.recommended_group, newer ? a.recommended_revision : "")), a), notes ? el("span", { class: "sub", text: notes }) : null)
     : el("td", {}, withNotes(link(entry, noBestText(a)), a), el("span", { class: "sub", text: noBestDetail(a) }));
   return el("tr", {},
-    el("td", {}, link(a.arr_url, a.title || "?"), el("span", { class: "sub", text: `${arrName(a.arr)} · ${seasonLabel(a)}` })),
+    el("td", {}, link(a.arr_url, a.title || "?"), " ", typeof seriesButton === "function" ? seriesButton(a.arr, num(a.arr_id), a.title || "?") : null,
+      el("span", { class: "sub", text: `${arrName(a.arr)} · ${seasonLabel(a)}` })),
     el("td", { class: "num", text: a.status === "not_downloaded" ? "–" : fmtBytes(a.library_bytes) }),
     el("td", {}, el("span", { class: "tag " + why.cls, text: why.text })),
     el("td", { text: a.status === "not_downloaded" ? "–" : groupWithRevision(a.current_group, newer ? a.current_revision : "") }),

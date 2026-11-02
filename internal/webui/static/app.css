@@ -416,3 +416,14 @@ table.data tr.stuck td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
   td.actions > * + * { margin-left: 0; margin-top: 4px; }
   td.actions > * { display: block; }
 }
+
+.info-btn {
+  padding: 0 5px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-radius: 999px;
+  color: var(--muted);
+  vertical-align: baseline;
+}
+.info-btn:hover { color: var(--accent); border-color: var(--accent); }
+#series-dialog { width: min(900px, calc(100vw - 32px)); }

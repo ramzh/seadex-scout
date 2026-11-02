@@ -182,7 +182,7 @@ function renderLibraryTab() {
     if (r.action === "fix") actions.append(actionButton("fix", r.t, "Fix flags", "Flag this season's files from the SeaDex best group as a best grab would"));
     if (r.action === "search") actions.append(actionButton("search", r.t, "Search", `Ask ${arrName(r.t.arr)} to search now`));
     return el("tr", {},
-      el("td", {}, r.a ? link(r.a.arr_url, r.s.title) : r.s.title, el("span", { class: "sub", text: `${arrName(r.s.arr)} · ${r.s.arr === "radarr" ? "Film" : r.s.season === 0 ? "Specials" : "Season " + r.s.season}` })),
+      el("td", {}, r.a ? link(r.a.arr_url, r.s.title) : r.s.title, " ", seriesButton(r.s.arr, r.s.id, r.s.title), el("span", { class: "sub", text: `${arrName(r.s.arr)} · ${r.s.arr === "radarr" ? "Film" : r.s.season === 0 ? "Specials" : "Season " + r.s.season}` })),
       el("td", { class: "num", text: `${r.s.low} / ${r.s.files}` }),
       el("td", { class: "num", text: String(r.s.min_score) }),
       el("td", { class: "opt", text: (r.s.groups || []).join(", ") || "–" }),
@@ -318,6 +318,53 @@ async function removeQueued(btn, it) {
   }
 }
 
+// ---------- per-series view ----------
+
+// seriesButton opens the per-series view for a finding's or scan row's title.
+function seriesButton(arr, id, title) {
+  if (!id) return null;
+  return el("button", { type: "button", class: "info-btn", title: `Everything about ${title}`, "aria-label": `Details for ${title}`, onclick: () => openSeries(arr, id, title) }, "ⓘ");
+}
+
+function openSeries(arr, id, title) {
+  const findings = ((state.snap && state.snap.findings) || []).filter((f) => f.attrs.arr === arr && num(f.attrs.arr_id) === id);
+  const scanRows = ((lib.scan && lib.scan.seasons) || []).filter((s) => s.arr === arr && s.id === id);
+  const first = findings[0] && findings[0].attrs;
+  $("series-title").replaceChildren(first ? link(first.arr_url, title) : document.createTextNode(title));
+  const low = scanRows.reduce((n, s) => n + s.low, 0);
+  $("series-sub").textContent = `${arrName(arr)} · ${findings.length} SeaDex rows · ${low} files below ${lib.scan ? lib.scan.min_score : "the minimum"}` +
+    (first && first.al_id ? "" : "");
+  const seasons = new Map();
+  for (const f of findings) {
+    const t = targetOf(f.attrs);
+    seasons.set(t ? targetKey(t) : Math.random(), { f, t });
+  }
+  for (const s of scanRows) {
+    const t = { arr: s.arr, id: s.id, season: s.arr === "sonarr" ? s.season : -1 };
+    if (!seasons.has(targetKey(t))) seasons.set(targetKey(t), { f: null, t });
+  }
+  const rows = [...seasons.values()].sort((x, y) => (x.t ? x.t.season : 0) - (y.t ? y.t.season : 0));
+  setRows($("series-rows").tBodies[0], rows.map(({ f, t }) => {
+    const a = f ? f.attrs : null;
+    const why = a ? whyOf(a) : { text: "Not compared", cls: "" };
+    const score = scoreFor(t);
+    const action = a ? actionFor(a) : "";
+    const actions = el("td", { class: "actions" });
+    if (t && action === "fix" && score) actions.append(actionButton("fix", t, "Fix flags", "Flag this season's files from the SeaDex best group"));
+    if (t && action === "search") actions.append(actionButton("search", t, "Search", "Search this season now"));
+    const entry = a && a.al_id ? SEADEX + a.al_id + "/" : "";
+    return el("tr", {},
+      el("td", { text: a ? seasonLabel(a) || "Whole series" : t.season === 0 ? "Specials" : t.season > 0 ? `Season ${t.season}` : "Film" }),
+      el("td", {}, el("span", { class: "tag " + why.cls, text: why.text })),
+      el("td", { text: a && a.status !== "not_downloaded" ? (a.current_group || "–") : "–" }),
+      el("td", {}, a && a.recommended_group ? link(entry, a.recommended_group) : el("span", { class: "muted", text: a ? noBestText(a) : "–" })),
+      el("td", { class: "num", text: score ? `${score.low} / ${score.files}` : "–" }),
+      actions);
+  }), 6, "Nothing known about this title.");
+  const dlg = $("series-dialog");
+  if (!dlg.open) dlg.showModal();
+}
+
 // ---------- wiring ----------
 
 function onTabShown(name) {
@@ -336,6 +383,7 @@ function onTabShown(name) {
     });
   }
   $("queue-reload").addEventListener("click", loadQueue);
+  $("series-close").addEventListener("click", () => $("series-dialog").close());
   $("queue-stuck").addEventListener("input", renderQueue);
   loadLibrary(false); // the Overview's score badges need it too
   onTabShown(state.tab);
