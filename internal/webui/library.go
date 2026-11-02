@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -45,8 +46,12 @@ const (
 // the setup docs/torznab-indexer.md describes; SEADEX_SCOUT_MIN_SCORE changes it.
 const DefaultMinScore = 5000
 
-// scoreScanEvery is how often the low-score scan runs on its own.
-const scoreScanEvery = 6 * time.Hour
+// scoreScanEvery is how often the low-score scan runs on its own; the
+// automatic queue imports run every autoEvery.
+const (
+	scoreScanEvery = 6 * time.Hour
+	autoEvery      = 30 * time.Minute
+)
 
 // arrAPI is one Sonarr or Radarr, with the API version it serves.
 type arrAPI struct {
@@ -136,8 +141,18 @@ type Library struct {
 	log            *slog.Logger
 	minScore       int
 
-	mu   sync.Mutex
-	scan ScoreScan
+	// Best returns the releases the curation marks as SeaDex best (see
+	// indexer.BestReleases); Qbit resolves AnimeBytes downloads to their
+	// torrent ids. Either may be nil, which only narrows what can be proven.
+	Best func(context.Context) (map[string][]int, error)
+	Qbit *Qbit
+	// Auto runs the flag fix and the queue import on their own, with the
+	// same rules as the buttons.
+	Auto bool
+
+	mu       sync.Mutex
+	scan     ScoreScan
+	lastScan time.Time
 }
 
 // NewLibrary returns the library actions for the arrs set up (a zero Arr
@@ -281,69 +296,89 @@ func normGroup(g string) string {
 // FlagFix is what FixFlags did.
 type FlagFix struct {
 	Fixed     int      `json:"fixed"`
+	Proven    int      `json:"proven"` // fixed by import proof rather than group
 	AlreadyOK int      `json:"already_ok"`
 	Skipped   int      `json:"skipped"`
 	Groups    []string `json:"groups"`
 	Skips     []string `json:"skips,omitempty"`
 }
 
-// FixFlags gives the target's files that belong to the SeaDex best group the
-// flags a best grab carries, when they score below the minimum. The groups
-// come from the scout's own finding for the target, which must say the
-// library holds the best, so the page cannot flag any file it likes.
+// FixFlags gives the target's files the flags a best grab carries, when they
+// score below the minimum and are proven to be the SeaDex best: either the
+// scout's own finding says the library holds the best and the file belongs to
+// that group, or the file was imported from a torrent the curation marks as
+// best for this series (provenFiles). The page cannot flag any file it likes.
 func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 	var res FlagFix
 	a, err := l.arr(t.Arr)
 	if err != nil {
 		return res, err
 	}
-	f, ok := l.store.findingFor(t)
-	if !ok {
-		return res, errors.New("no finding for this title; run a check first")
-	}
-	if status := f.Str("status"); status != "at_best" && status != "newer_revision" {
-		return res, fmt.Errorf("the scout does not say you hold the SeaDex best here (status %s)", status)
-	}
 	groups := map[string]bool{}
-	for _, g := range strings.Split(f.Str("recommended_groups")+","+f.Str("recommended_group"), ",") {
-		if g = normGroup(g); g != "" {
-			groups[g] = true
-			res.Groups = append(res.Groups, g)
+	var noGroups error
+	f, ok := l.store.findingFor(t)
+	switch status := f.Str("status"); {
+	case !ok:
+		noGroups = errors.New("no finding for this title and no file imported from a SeaDex best torrent")
+	case status != "at_best" && status != "newer_revision":
+		noGroups = fmt.Errorf("the scout does not say you hold the SeaDex best here (status %s), and no file was imported from a SeaDex best torrent", status)
+	default:
+		for _, g := range strings.Split(f.Str("recommended_groups")+","+f.Str("recommended_group"), ",") {
+			if g = normGroup(g); g != "" {
+				groups[g] = true
+				res.Groups = append(res.Groups, g)
+			}
 		}
-	}
-	slices.Sort(res.Groups)
-	res.Groups = slices.Compact(res.Groups)
-	if len(groups) == 0 {
-		return res, errors.New("the finding names no SeaDex best group")
+		slices.Sort(res.Groups)
+		res.Groups = slices.Compact(res.Groups)
 	}
 	files, err := l.files(ctx, a, t.ID)
 	if err != nil {
 		return res, err
 	}
+	tvdb, err := l.tvdbOf(ctx, a, t.ID)
+	if err != nil {
+		return res, err
+	}
 	best := bestFlags(t.Arr)
+	var low []arrFile
+	for _, file := range files {
+		if t.Arr == "sonarr" && t.Season >= 0 && file.SeasonNumber != t.Season {
+			continue
+		}
+		if flagBits(t.Arr, file.IndexerFlags)&best == best || file.CustomFormatScore >= l.minScore {
+			res.AlreadyOK++
+			continue
+		}
+		low = append(low, file)
+	}
+	proven, proofErr := l.provenFiles(ctx, a, t.ID, tvdb, low, nil)
 	type update struct {
 		ID           int `json:"id"`
 		IndexerFlags int `json:"indexerFlags"`
 	}
 	var updates []update
-	for _, file := range files {
-		if t.Arr == "sonarr" && t.Season >= 0 && file.SeasonNumber != t.Season {
-			continue
-		}
-		have := flagBits(t.Arr, file.IndexerFlags)
+	for _, file := range low {
 		switch {
-		case have&best == best || file.CustomFormatScore >= l.minScore:
-			res.AlreadyOK++
-		case !groups[normGroup(file.ReleaseGroup)]:
+		case groups[normGroup(file.ReleaseGroup)]:
+		case proven[file.ID]:
+			res.Proven++
+		default:
 			res.Skipped++
 			if len(res.Skips) < 5 {
 				res.Skips = append(res.Skips, fmt.Sprintf("%s (group %q)", file.RelativePath, file.ReleaseGroup))
 			}
-		default:
-			updates = append(updates, update{ID: file.ID, IndexerFlags: have | best})
+			continue
 		}
+		updates = append(updates, update{ID: file.ID, IndexerFlags: flagBits(t.Arr, file.IndexerFlags) | best})
 	}
 	if len(updates) == 0 {
+		if noGroups != nil && len(low) > 0 {
+			if proofErr != nil {
+				return res, fmt.Errorf("%w (import proof: %v)", noGroups, proofErr)
+			}
+			return res, noGroups
+		}
 		return res, nil
 	}
 	path := "/episodefile/bulk"
@@ -356,6 +391,120 @@ func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 	res.Fixed = len(updates)
 	l.forget(t)
 	return res, nil
+}
+
+// abTorrent finds the AnimeBytes torrent id in the comment qBittorrent keeps
+// for an AnimeBytes download ("https://animebytes.tv/torrent/368375/group").
+var abTorrent = regexp.MustCompile(`animebytes\.tv/torrent/(\d+)`)
+
+// bestIndex maps the info hash of every SeaDex best release the scout knows
+// to the TVDB ids of the entries that call it best. Nyaa releases carry their
+// hash in the feed; an AnimeBytes release is found through the torrent id in
+// qBittorrent's comment for it.
+func (l *Library) bestIndex(ctx context.Context) (map[string][]int, error) {
+	if l.Best == nil {
+		return nil, errors.New("the feed is not available")
+	}
+	best, err := l.Best(ctx)
+	if err != nil {
+		return nil, err
+	}
+	idx := map[string][]int{}
+	for k, v := range best {
+		if !strings.Contains(k, ":") {
+			idx[k] = v
+		}
+	}
+	if l.Qbit == nil {
+		return idx, nil
+	}
+	torrents, err := l.Qbit.Torrents(ctx)
+	if err != nil {
+		return idx, err
+	}
+	for _, t := range torrents {
+		if m := abTorrent.FindStringSubmatch(t.Comment); m != nil {
+			if v, ok := best["ab:"+m[1]]; ok {
+				idx[strings.ToLower(t.Hash)] = v
+			}
+		}
+	}
+	return idx, nil
+}
+
+// importHashes maps each file id of a series or movie to the download it was
+// imported from, read from the arr's import history.
+func (l *Library) importHashes(ctx context.Context, a *arrAPI, id int) (map[int]string, error) {
+	type rec struct {
+		EventType  string            `json:"eventType"`
+		DownloadID string            `json:"downloadId"`
+		Data       map[string]string `json:"data"`
+	}
+	var recs []rec
+	var err error
+	switch {
+	case a.name == "radarr":
+		err = a.call(ctx, http.MethodGet, "/history/movie?movieId="+strconv.Itoa(id), nil, &recs)
+	case a.version(ctx) == "v5":
+		var page struct {
+			Records []rec `json:"records"`
+		}
+		err = a.call(ctx, http.MethodGet, fmt.Sprintf("/history?seriesIds=%d&page=1&pageSize=5000", id), nil, &page)
+		recs = page.Records
+	default:
+		err = a.call(ctx, http.MethodGet, "/history/series?seriesId="+strconv.Itoa(id), nil, &recs)
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]string{}
+	for _, r := range recs {
+		if r.EventType != "downloadFolderImported" || r.DownloadID == "" {
+			continue
+		}
+		if fid, err := strconv.Atoi(r.Data["fileId"]); err == nil {
+			out[fid] = strings.ToLower(r.DownloadID)
+		}
+	}
+	return out, nil
+}
+
+// provenFiles returns the files imported from a torrent the curation marks as
+// best for this series (its TVDB id must be among the entries calling it
+// best; a film's, which Radarr knows by no TVDB id, need only be best). idx is
+// the bestIndex, read here when nil.
+func (l *Library) provenFiles(ctx context.Context, a *arrAPI, id, tvdb int, files []arrFile, idx map[string][]int) (map[int]bool, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+	var idxErr error
+	if idx == nil {
+		if idx, idxErr = l.bestIndex(ctx); len(idx) == 0 {
+			return nil, idxErr
+		}
+	}
+	hashes, err := l.importHashes(ctx, a, id)
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]bool{}
+	for _, f := range files {
+		tvdbs, ok := idx[hashes[f.ID]]
+		if ok && (a.name == "radarr" || (tvdb > 0 && slices.Contains(tvdbs, tvdb))) {
+			out[f.ID] = true
+		}
+	}
+	return out, idxErr
+}
+
+// tvdbOf returns a Sonarr series' TVDB id (0 for Radarr).
+func (l *Library) tvdbOf(ctx context.Context, a *arrAPI, id int) (int, error) {
+	if a.name == "radarr" {
+		return 0, nil
+	}
+	var it arrItem
+	err := a.call(ctx, http.MethodGet, "/series/"+strconv.Itoa(id), nil, &it)
+	return it.TvdbID, err
 }
 
 // ---------- low-score scan ----------
@@ -371,6 +520,9 @@ type SeasonScore struct {
 	Min    int      `json:"min_score"`
 	Groups []string `json:"groups"`
 	Bytes  int64    `json:"bytes"`
+	// Proven counts the low files imported from a SeaDex best torrent, which
+	// Fix flags can flag whatever their group.
+	Proven int `json:"proven"`
 }
 
 // ScoreScan is the newest low-score scan.
@@ -409,21 +561,30 @@ func (l *Library) forget(t Target) {
 // ErrScanRunning means a scan is already under way.
 var ErrScanRunning = errors.New("a score scan is already running")
 
-// StartScan starts a scan in the background.
-func (l *Library) StartScan(ctx context.Context) error {
+// beginScan marks a scan as running, or reports that one already is.
+func (l *Library) beginScan() bool {
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.scan.Running {
-		l.mu.Unlock()
-		return ErrScanRunning
+		return false
 	}
 	l.scan.Running = true
 	l.scan.StartedAt = time.Now().UTC()
-	l.mu.Unlock()
+	return true
+}
+
+// StartScan starts a scan in the background.
+func (l *Library) StartScan(ctx context.Context) error {
+	if !l.beginScan() {
+		return ErrScanRunning
+	}
 	go l.runScan(ctx)
 	return nil
 }
 
-// Run scans a minute after the start and then every scoreScanEvery.
+// Run scans a minute after the start and then every scoreScanEvery. With Auto
+// set it fixes flags after each scan and imports stuck SeaDex grabs every
+// autoEvery.
 func (l *Library) Run(ctx context.Context) {
 	if l.sonarr == nil && l.radarr == nil {
 		return
@@ -435,8 +596,78 @@ func (l *Library) Run(ctx context.Context) {
 			return
 		case <-time.After(wait):
 		}
-		_ = l.StartScan(ctx)
-		wait = scoreScanEvery
+		wait = autoEvery
+		scanned := false
+		if time.Since(l.lastScan) >= scoreScanEvery && l.beginScan() {
+			l.runScan(ctx)
+			l.lastScan = time.Now()
+			scanned = true
+		}
+		if l.Auto {
+			if scanned {
+				l.autoFix(ctx)
+			}
+			l.autoImport(ctx)
+		}
+	}
+}
+
+// autoFix runs Fix flags on every scanned season that can be proven to hold
+// the best: by import, or by the scout's finding.
+func (l *Library) autoFix(ctx context.Context) {
+	for _, s := range l.Scan().Seasons {
+		if ctx.Err() != nil {
+			return
+		}
+		t := Target{Arr: s.Arr, ID: s.ID, Season: s.Season}
+		if s.Arr == "radarr" {
+			t.Season = -1
+		}
+		if s.Proven == 0 {
+			f, ok := l.store.findingFor(t)
+			if st := f.Str("status"); !ok || (st != "at_best" && st != "newer_revision") {
+				continue
+			}
+		}
+		res, err := l.FixFlags(ctx, t)
+		if err != nil {
+			l.log.Debug("automatic flag fix skipped", "arr", t.Arr, "arr_id", t.ID, "season", t.Season, "error", err)
+			continue
+		}
+		if res.Fixed > 0 {
+			l.log.Info("indexer flags fixed automatically", "arr", t.Arr, "arr_id", t.ID, "season", t.Season,
+				"title", s.Title, "fixed", res.Fixed, "proven", res.Proven, "skipped", res.Skipped)
+		}
+	}
+}
+
+// autoImport imports the stuck Sonarr downloads that were grabbed as a
+// SeaDex best (the grab carries the best flags), with Import's rules.
+func (l *Library) autoImport(ctx context.Context) {
+	if l.sonarr == nil {
+		return
+	}
+	items, err := l.Queue(ctx)
+	if err != nil {
+		l.log.Debug("automatic import could not read the queue", "error", err)
+		return
+	}
+	best := bestFlags("sonarr")
+	for _, it := range items {
+		if it.Arr != "sonarr" || !it.Stuck || !it.CanImport || ctx.Err() != nil {
+			continue
+		}
+		preview, err := l.ImportQueued(ctx, it.ID, true)
+		if err != nil || preview.Files == 0 || preview.IndexerFlags&best != best {
+			continue
+		}
+		res, err := l.ImportQueued(ctx, it.ID, false)
+		if err != nil {
+			l.log.Warn("automatic import failed", "queue_id", it.ID, "title", it.Title, "error", err)
+			continue
+		}
+		l.log.Info("stuck SeaDex download imported automatically", "queue_id", it.ID, "title", it.Title,
+			"files", res.Files, "skipped", res.Skipped, "indexer_flags", res.IndexerFlags, "command", res.Command)
 	}
 }
 
@@ -444,6 +675,10 @@ func (l *Library) runScan(ctx context.Context) {
 	var seasons []SeasonScore
 	var errs []string
 	scanned, files, low := 0, 0, 0
+	idx, idxErr := l.bestIndex(ctx)
+	if idxErr != nil {
+		errs = append(errs, "import proof: "+idxErr.Error())
+	}
 	for _, a := range []*arrAPI{l.sonarr, l.radarr} {
 		if a == nil {
 			continue
@@ -464,6 +699,7 @@ func (l *Library) runScan(ctx context.Context) {
 			}
 			scanned++
 			by := map[int]*SeasonScore{}
+			var lowFiles []arrFile
 			for _, f := range fs {
 				files++
 				season := f.SeasonNumber
@@ -480,11 +716,27 @@ func (l *Library) runScan(ctx context.Context) {
 					s.Min = f.CustomFormatScore
 				}
 				if f.CustomFormatScore < l.minScore {
+					lowFiles = append(lowFiles, f)
 					s.Low++
 					low++
 					s.Bytes += f.Size
 					if g := f.ReleaseGroup; g != "" && !slices.Contains(s.Groups, g) {
 						s.Groups = append(s.Groups, g)
+					}
+				}
+			}
+			if len(idx) > 0 && len(lowFiles) > 0 {
+				proven, err := l.provenFiles(ctx, a, it.ID, it.TvdbID, lowFiles, idx)
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("%s %s history: %v", a.name, it.Title, err))
+				}
+				for _, f := range lowFiles {
+					if proven[f.ID] {
+						season := f.SeasonNumber
+						if a.name == "radarr" {
+							season = -1
+						}
+						by[season].Proven++
 					}
 				}
 			}
@@ -512,6 +764,7 @@ func (l *Library) runScan(ctx context.Context) {
 // arrItem is a series or movie the scan reads, with what is monitored.
 type arrItem struct {
 	ID        int    `json:"id"`
+	TvdbID    int    `json:"tvdbId"`
 	Title     string `json:"title"`
 	Monitored bool   `json:"monitored"`
 	Profile   int    `json:"qualityProfileId"`

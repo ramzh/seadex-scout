@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -19,6 +20,7 @@ type fakeSonarr struct {
 	rows    []map[string]any
 	bulk    []map[string]any
 	cmds    []map[string]any
+	roots   []string
 }
 
 func (f *fakeSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -26,6 +28,14 @@ func (f *fakeSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/api/v5/system/status":
 		_ = enc.Encode(map[string]string{"version": "5.0.0"})
+	case r.URL.Path == "/api/v5/series/7":
+		_ = enc.Encode(map[string]int{"id": 7, "tvdbId": 99})
+	case r.URL.Path == "/api/v5/rootfolder":
+		var out []map[string]string
+		for _, p := range f.roots {
+			out = append(out, map[string]string{"path": p})
+		}
+		_ = enc.Encode(out)
 	case r.URL.Path == "/api/v5/episodefile" && r.Method == http.MethodGet:
 		_ = enc.Encode(f.files)
 	case r.URL.Path == "/api/v5/episodefile/bulk" && r.Method == http.MethodPut:
@@ -85,7 +95,9 @@ func TestFixFlagsFlagsOnlyTheBestGroupsLowFiles(t *testing.T) {
 }
 
 func TestFixFlagsRefusesWithoutABestFinding(t *testing.T) {
-	fake := &fakeSonarr{}
+	fake := &fakeSonarr{files: []map[string]any{
+		{"id": 1, "seasonNumber": 1, "releaseGroup": "NAN0", "customFormatScore": 0, "indexerFlags": 0},
+	}}
 	lib := newTestLibrary(t, fake, finding("better_release", "nan0", 1))
 	if _, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1}); err == nil {
 		t.Fatal("FixFlags flagged files the scout does not say hold the best")
@@ -164,5 +176,39 @@ func TestSearchPicksTheCommand(t *testing.T) {
 	}
 	if _, err := lib.Search(t.Context(), Target{Arr: "radarr", ID: 1}); err == nil {
 		t.Error("search on an arr that is not set up succeeded")
+	}
+}
+
+func TestFixFlagsFlagsFilesImportedFromABestTorrent(t *testing.T) {
+	fake := &fakeSonarr{
+		files: []map[string]any{
+			{"id": 1, "seasonNumber": 2, "releaseGroup": "", "customFormatScore": 0, "indexerFlags": 0},
+			{"id": 2, "seasonNumber": 2, "releaseGroup": "", "customFormatScore": 0, "indexerFlags": 0},
+			{"id": 3, "seasonNumber": 2, "releaseGroup": "", "customFormatScore": 0, "indexerFlags": 0},
+		},
+		history: []map[string]any{
+			{"eventType": "downloadFolderImported", "downloadId": "ABC", "data": map[string]string{"fileId": "1"}},
+			{"eventType": "downloadFolderImported", "downloadId": "DEF", "data": map[string]string{"fileId": "2"}},
+			{"eventType": "grabbed", "downloadId": "ABC", "data": map[string]string{"fileId": "3"}},
+		},
+	}
+	lib := newTestLibrary(t, fake) // no finding at all
+	lib.Best = func(context.Context) (map[string][]int, error) {
+		return map[string][]int{"abc": {99}, "def": {5}}, nil // DEF is best for another series
+	}
+	res, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Fixed != 1 || res.Proven != 1 || res.Skipped != 2 {
+		t.Fatalf("result = %+v, want file 1 fixed by proof and 2 skipped", res)
+	}
+	if len(fake.bulk) != 1 || fake.bulk[0]["id"] != float64(1) {
+		t.Fatalf("bulk update = %v, want file 1 only", fake.bulk)
+	}
+	lib.Best = func(context.Context) (map[string][]int, error) { return map[string][]int{}, nil }
+	fake.bulk = nil
+	if _, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 2}); err == nil || fake.bulk != nil {
+		t.Fatalf("flagged without a finding or a proof: %v, %v", err, fake.bulk)
 	}
 }

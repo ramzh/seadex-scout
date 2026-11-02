@@ -41,6 +41,8 @@ type Options struct {
 	Refresher *LibraryRefresher
 	// Library acts on Sonarr and Radarr: search, flag fixes, scores, queue.
 	Library *Library
+	// Leftovers lists and deletes torrents no library file uses any more.
+	Leftovers *Leftovers
 	// Ctx bounds background jobs the page starts (the score scan).
 	Ctx context.Context
 	Log *slog.Logger

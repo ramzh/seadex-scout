@@ -391,7 +391,7 @@ td.actions > * + * { margin-left: 6px; }
 }
 .act-btn.fix { color: var(--good); border-color: var(--good); }
 .act-btn.done { color: var(--good); border-color: var(--good); opacity: 0.85; }
-.act-btn.failed { color: var(--bad); border-color: var(--bad); }
+.act-btn.failed, .act-btn.bad { color: var(--bad); border-color: var(--bad); }
 .score-badge {
   display: inline-block;
   padding: 1px 7px;

@@ -18,6 +18,7 @@ import (
 	"github.com/cplieger/health"
 	"github.com/cplieger/scheduler/v4"
 	"github.com/cplieger/seadex-scout/internal/config"
+	"github.com/cplieger/seadex-scout/internal/indexer"
 	"github.com/cplieger/seadex-scout/internal/scout"
 	"github.com/cplieger/seadex-scout/internal/webui"
 )
@@ -43,6 +44,12 @@ const (
 	// envMinScore is the custom format score a SeaDex best file reaches; the
 	// Library tab lists files below it.
 	envMinScore = "SEADEX_SCOUT_MIN_SCORE"
+	// envAutoFix turns on the automatic flag fix and queue import.
+	envAutoFix = "SEADEX_SCOUT_AUTO_FIX"
+	// envLeftoverCategories lists the qBittorrent categories the leftover
+	// torrent view checks (comma-separated).
+	envLeftoverCategories     = "SEADEX_SCOUT_LEFTOVER_CATEGORIES"
+	defaultLeftoverCategories = "anime-tv,anime-tv-imported,anime-film,anime-film-imported"
 
 	envQbitURL            = "SEADEX_SCOUT_QBIT_URL"
 	envQbitUsername       = "SEADEX_SCOUT_QBIT_USERNAME"
@@ -156,7 +163,22 @@ func (w *webUIRuntime) start(ctx context.Context, cfg *config.Config) func() {
 
 	minScore, _ := strconv.Atoi(strings.TrimSpace(os.Getenv(envMinScore)))
 	library := webui.NewLibrary(sonarr, radarr, minScore, w.store, log)
+	qbit := newQbit(log)
+	library.Qbit = qbit
+	library.Best = func(ctx context.Context) (map[string][]int, error) {
+		return indexer.BestReleases(ctx, config.DefaultIndexerFeedPath)
+	}
+	library.Auto, _ = strconv.ParseBool(strings.TrimSpace(os.Getenv(envAutoFix)))
+	if library.Auto {
+		log.Info("automatic flag fix and queue import on", "env", envAutoFix)
+	}
 	go library.Run(ctx)
+	var categories []string
+	for _, c := range strings.Split(cmp.Or(os.Getenv(envLeftoverCategories), defaultLeftoverCategories), ",") {
+		if c = strings.TrimSpace(c); c != "" {
+			categories = append(categories, c)
+		}
+	}
 
 	srv := webui.NewServer(webui.Options{
 		Addr:      w.addr,
@@ -166,10 +188,11 @@ func (w *webUIRuntime) start(ctx context.Context, cfg *config.Config) func() {
 		Store:     w.store,
 		Runner:    runner,
 		Notifier:  notifier,
-		Qbit:      newQbit(log),
+		Qbit:      qbit,
 		Usenet:    newUsenet(log),
 		Refresher: webui.NewLibraryRefresher(ctx, refreshAll, w.store),
 		Library:   library,
+		Leftovers: webui.NewLeftovers(library, qbit, categories),
 		Ctx:       ctx,
 		Log:       log,
 	})

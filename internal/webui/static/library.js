@@ -86,7 +86,7 @@ async function runAction(kind, t, btn) {
       const r = await postJSON("api/arr/fixflags", t);
       const text = r.fixed ? `Fixed ${r.fixed} ✓` : r.skipped ? `0 fixed (${r.skipped} other group)` : "Already OK ✓";
       lib.done.set(key, text);
-      if (btn) btn.title = [`${r.fixed} fixed, ${r.already_ok} already scored, ${r.skipped} skipped`,
+      if (btn) btn.title = [`${r.fixed} fixed (${r.proven} by import proof), ${r.already_ok} already scored, ${r.skipped} skipped`,
         r.groups && r.groups.length ? `SeaDex best groups: ${r.groups.join(", ")}` : "",
         ...(r.skips || [])].filter(Boolean).join("\n");
       if (lib.scan && r.fixed) lib.scan.seasons = lib.scan.seasons.filter((s) => !(s.arr === t.arr && s.id === t.id && (t.arr === "radarr" || t.season < 0 || s.season === t.season)));
@@ -144,7 +144,9 @@ function libraryRows() {
     const f = idx.get(targetKey(t)) || (s.arr === "sonarr" ? idx.get(`sonarr:${s.id}`) : null);
     const a = f ? f.attrs : null;
     let action = a ? actionFor(a) : "";
-    // A whole-series finding acts on the season the scan found.
+    // Files imported from a SeaDex best torrent can be flagged whatever the finding says.
+    if (s.proven > 0) action = "fix";
+    if (!a && !action) action = "unmatched";
     return { s, t, a, action };
   });
 }
@@ -172,14 +174,15 @@ function renderLibraryTab() {
   $("lib-kpi-fix").textContent = scan.finished_at ? count("fix").toLocaleString() : "–";
   $("lib-kpi-search").textContent = scan.finished_at ? count("search").toLocaleString() : "–";
   $("lib-kpi-none").textContent = scan.finished_at ? count("").toLocaleString() : "–";
+  $("lib-kpi-unmatched").textContent = scan.finished_at ? count("unmatched").toLocaleString() : "–";
   for (const tile of document.querySelectorAll(".kpi[data-lib]")) tile.classList.toggle("selected", tile.dataset.lib === show);
 
   $("lib-count").textContent = rows.length;
   renderBulk(rows);
   setRows($("lib-rows").tBodies[0], rows.map((r) => {
-    const why = r.a ? whyOf(r.a) : { text: "Not on SeaDex or not compared", cls: "" };
+    const why = r.a ? whyOf(r.a) : r.s.proven ? { text: "Imported from a SeaDex best", cls: "good" } : { text: "Not matched to SeaDex", cls: "" };
     const actions = el("td", { class: "actions" });
-    if (r.action === "fix") actions.append(actionButton("fix", r.t, "Fix flags", "Flag this season's files from the SeaDex best group as a best grab would"));
+    if (r.action === "fix") actions.append(actionButton("fix", r.t, "Fix flags", "Flag this season's files from the SeaDex best group as a best grab would" + (r.s.proven ? `; ${r.s.proven} files were imported from a SeaDex best torrent` : "")));
     if (r.action === "search") actions.append(actionButton("search", r.t, "Search", `Ask ${arrName(r.t.arr)} to search now`));
     return el("tr", {},
       el("td", {}, r.a ? link(r.a.arr_url, r.s.title) : r.s.title, " ", seriesButton(r.s.arr, r.s.id, r.s.title), el("span", { class: "sub", text: `${arrName(r.s.arr)} · ${r.s.arr === "radarr" ? "Film" : r.s.season === 0 ? "Specials" : "Season " + r.s.season}` })),
@@ -367,9 +370,65 @@ function openSeries(arr, id, title) {
 
 // ---------- wiring ----------
 
+// ---------- Torrents tab (leftovers) ----------
+
+async function loadLeftovers(force) {
+  try {
+    if (force) await postJSON("api/leftovers/scan").catch((err) => { if (!/already running/.test(err.message)) throw err; });
+    lib.left = await getJSON("api/leftovers");
+    lib.leftError = "";
+  } catch (err) {
+    lib.leftError = err.message;
+  }
+  const running = lib.left && lib.left.running;
+  if (running && !lib.leftPoll) lib.leftPoll = setInterval(() => loadLeftovers(false), 5000);
+  if (!running && lib.leftPoll) { clearInterval(lib.leftPoll); lib.leftPoll = null; }
+  renderLeftovers();
+}
+
+function renderLeftovers() {
+  const s = lib.left;
+  const now = state.snap ? new Date(state.snap.now).getTime() : Date.now();
+  $("left-scan").disabled = Boolean(s && s.running);
+  $("left-status").textContent = lib.leftError ? "Could not read the leftovers: " + lib.leftError
+    : !s ? "Loading…" : s.running ? "Comparing torrents with the library…"
+    : s.finished_at ? `Checked ${s.checked} torrents ${ago(s.finished_at, now)}` + (s.error ? ` · error: ${s.error}` : "")
+    : "Not checked yet.";
+  const rows = (s && s.torrents) || [];
+  const free = rows.filter((t) => !t.keep).reduce((n, t) => n + t.size, 0);
+  $("left-count").textContent = rows.length;
+  $("left-total").textContent = rows.length ? `${fmtBytes(free)} can be freed` : "";
+  setRows($("left-rows").tBodies[0], rows.map((t) => {
+    const actions = el("td", { class: "actions" });
+    if (!t.keep) actions.append(el("button", { type: "button", class: "act-btn bad", title: "Delete the torrent and its data in qBittorrent", onclick: (e) => deleteLeftover(e.currentTarget, t) }, "Delete"));
+    return el("tr", {},
+      el("td", {}, t.name, el("span", { class: "sub", text: `${t.category} · ${t.files} files${t.missing ? ` · ${t.missing} missing` : ""}` })),
+      el("td", { class: "num", text: fmtBytes(t.size) }),
+      el("td", { class: "opt small", text: t.added_on ? new Date(t.added_on * 1000).toLocaleDateString() : "–" }),
+      el("td", {}, el("span", { class: "tag " + (t.keep ? "" : "warn"), text: t.keep ? "Kept: " + t.keep : "Not in the library" })),
+      actions);
+  }), 5, s && s.finished_at ? "Every finished torrent has a file in the library." : "Press Find leftovers.");
+}
+
+async function deleteLeftover(btn, t) {
+  if (!confirm(`Delete "${t.name}" and its ${fmtBytes(t.size)} of data? This cannot be undone.`)) return;
+  btn.disabled = true;
+  btn.textContent = "Deleting…";
+  try {
+    await postJSON("api/leftovers/delete", { hash: t.hash });
+    lib.left.torrents = lib.left.torrents.filter((x) => x.hash !== t.hash);
+    renderLeftovers();
+  } catch (err) {
+    btn.textContent = "Failed";
+    btn.title = err.message;
+    btn.disabled = false;
+  }
+}
+
 function onTabShown(name) {
   if (name === "library") (lib.scan ? renderLibraryTab() : loadLibrary(false));
   if (name === "queue") loadQueue();
+  if (name === "torrents") (lib.left ? renderLeftovers() : loadLeftovers(false));
 }
 
 (function initLibrary() {
@@ -383,6 +442,7 @@ function onTabShown(name) {
     });
   }
   $("queue-reload").addEventListener("click", loadQueue);
+  $("left-scan").addEventListener("click", () => loadLeftovers(true));
   $("series-close").addEventListener("click", () => $("series-dialog").close());
   $("queue-stuck").addEventListener("input", renderQueue);
   loadLibrary(false); // the Overview's score badges need it too

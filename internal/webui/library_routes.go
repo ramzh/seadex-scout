@@ -129,4 +129,46 @@ func libraryRoutes(app *http.ServeMux, o Options) {
 		o.Log.Info("download removed from the queue from the dashboard; the torrent is kept", "arr", in.Arr, "queue_id", in.ID)
 		writeJSON(w, map[string]bool{"removed": true})
 	})
+
+	leftReady := func(w http.ResponseWriter, r *http.Request, post bool) bool {
+		if !ready(w, r, post) {
+			return false
+		}
+		if o.Leftovers == nil {
+			http.Error(w, "qBittorrent is not set up", http.StatusNotImplemented)
+			return false
+		}
+		return true
+	}
+	app.HandleFunc("GET /api/leftovers", func(w http.ResponseWriter, r *http.Request) {
+		if leftReady(w, r, false) {
+			writeJSON(w, o.Leftovers.Scan())
+		}
+	})
+	app.HandleFunc("POST /api/leftovers/scan", func(w http.ResponseWriter, r *http.Request) {
+		if !leftReady(w, r, true) {
+			return
+		}
+		if err := o.Leftovers.Start(cmp.Or(o.Ctx, context.Background())); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, o.Leftovers.Scan())
+	})
+	app.HandleFunc("POST /api/leftovers/delete", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Hash string `json:"hash"`
+		}
+		if !leftReady(w, r, true) || !decode(w, r, &in) {
+			return
+		}
+		t, err := o.Leftovers.Delete(r.Context(), in.Hash)
+		if err != nil {
+			fail(w, "leftover delete", err)
+			return
+		}
+		o.Log.Info("leftover torrent deleted with its data from the dashboard", "torrent", t.Name, "size", t.Size, "category", t.Category)
+		writeJSON(w, t)
+	})
 }

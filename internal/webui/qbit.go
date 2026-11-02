@@ -2,6 +2,7 @@ package webui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -211,6 +213,94 @@ func (q *Qbit) post(ctx context.Context, path string, form url.Values) (int, str
 // short body. The Referer and Origin name qBittorrent itself, which its CSRF
 // check requires.
 func (q *Qbit) do(ctx context.Context, method, path string, form url.Values) (int, string, error) {
+	return q.doLimit(ctx, method, path, form, 512)
+}
+
+// QbitTorrent is the part of a torrent the library views read.
+type QbitTorrent struct {
+	Hash        string  `json:"hash"`
+	Name        string  `json:"name"`
+	Category    string  `json:"category"`
+	Comment     string  `json:"comment"`
+	Tracker     string  `json:"tracker"`
+	ContentPath string  `json:"content_path"`
+	SavePath    string  `json:"save_path"`
+	Private     bool    `json:"private"`
+	Size        int64   `json:"size"`
+	Progress    float64 `json:"progress"`
+	AddedOn     int64   `json:"added_on"`
+}
+
+// QbitFile is one file of a torrent; Name is relative to the save path.
+type QbitFile struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+// readJSON GETs path and decodes the answer, signing in once when the
+// session is missing or expired.
+func (q *Qbit) readJSON(ctx context.Context, path string, out any) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for try := 0; ; try++ {
+		status, body, err := q.doLimit(ctx, http.MethodGet, path, nil, 256<<20)
+		switch {
+		case err != nil:
+			return err
+		case (status == http.StatusForbidden || status == http.StatusUnauthorized) && try == 0:
+			if err := q.signIn(ctx); err != nil {
+				return err
+			}
+			continue
+		case status != http.StatusOK:
+			return answerError("the read of "+strings.SplitN(path, "?", 2)[0], status, firstBytes(body, 200))
+		}
+		return json.Unmarshal([]byte(body), out)
+	}
+}
+
+func firstBytes(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+// Torrents lists every torrent.
+func (q *Qbit) Torrents(ctx context.Context) ([]QbitTorrent, error) {
+	var out []QbitTorrent
+	return out, q.readJSON(ctx, "/api/v2/torrents/info", &out)
+}
+
+// Files lists a torrent's files.
+func (q *Qbit) Files(ctx context.Context, hash string) ([]QbitFile, error) {
+	var out []QbitFile
+	return out, q.readJSON(ctx, "/api/v2/torrents/files?hash="+url.QueryEscape(hash), &out)
+}
+
+// Delete removes a torrent, and its data when deleteFiles is set.
+func (q *Qbit) Delete(ctx context.Context, hash string, deleteFiles bool) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	form := url.Values{"hashes": {hash}, "deleteFiles": {strconv.FormatBool(deleteFiles)}}
+	for try := 0; ; try++ {
+		status, body, err := q.post(ctx, "/api/v2/torrents/delete", form)
+		switch {
+		case err != nil:
+			return err
+		case (status == http.StatusForbidden || status == http.StatusUnauthorized) && try == 0:
+			if err := q.signIn(ctx); err != nil {
+				return err
+			}
+			continue
+		case status/100 != 2:
+			return answerError("the delete", status, body)
+		}
+		return nil
+	}
+}
+
+func (q *Qbit) doLimit(ctx context.Context, method, path string, form url.Values, limit int64) (int, string, error) {
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
@@ -233,6 +323,6 @@ func (q *Qbit) do(ctx context.Context, method, path string, form url.Values) (in
 		return 0, "", fmt.Errorf("could not reach qBittorrent: %w", err)
 	}
 	defer res.Body.Close()
-	answer, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+	answer, _ := io.ReadAll(io.LimitReader(res.Body, limit))
 	return res.StatusCode, strings.TrimSpace(string(answer)), nil
 }
