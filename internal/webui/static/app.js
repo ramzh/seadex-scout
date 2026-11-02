@@ -161,6 +161,7 @@ function showTab(name) {
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   if (name === "log") loadLogs();
   if (name === "reports") loadReports();
+  if (typeof onTabShown === "function") onTabShown(name); // library.js
 }
 
 function initTabs() {
@@ -487,6 +488,7 @@ const FINDING_COLUMNS = [
   { label: "Size / change", key: "altchange", num: true, title: "Download size, and below it how much your library grows (+) or shrinks (−)" },
   { label: "Link" },
   { label: "First seen", key: "first", num: true },
+  { label: "Actions" },
 ];
 
 const TEXT_SORTS = new Set(["title", "why", "current", "best", "alt"]);
@@ -591,7 +593,7 @@ function findingRows(f, now) {
       el("td", {}), el("td", {}), el("td", {}), el("td", {}),
       ...optionCells(a, bests[i], entry, "best"),
       ...optionCells(a, alts[i], entry, "alt"),
-      el("td", {}));
+      el("td", {}), el("td", {}));
     subs.push(tr);
   }
   return [row, ...subs];
@@ -653,7 +655,8 @@ function findingRow(f, now) {
     altCell(a, entry),
     a.alt_group ? sizeCell(a.alt_recommended_bytes, changeOf(a, "alt_"), isApprox(a, "alt_")) : el("td", { class: "num", text: "–" }),
     linkCell(a, releaseLinks(a, "alt_"), a.alt_nyaa_url),
-    el("td", { class: "num", text: a.first_seen ? ago(num(a.first_seen), now) : "–" }));
+    el("td", { class: "num", text: a.first_seen ? ago(num(a.first_seen), now) : "–" }),
+    typeof findingActions === "function" ? findingActions(f) : el("td", {}));
 }
 
 function noBestText(a) {

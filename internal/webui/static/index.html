@@ -7,6 +7,7 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="app.css">
 <script src="app.js" defer></script>
+<script src="library.js" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -25,6 +26,8 @@
 
 <nav class="tabs" role="tablist">
   <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
+  <button role="tab" data-tab="library">Library</button>
+  <button role="tab" data-tab="queue">Queue</button>
   <button role="tab" data-tab="activity">Activity</button>
   <button role="tab" data-tab="health">Scout health</button>
   <button role="tab" data-tab="reports">Reports</button>
@@ -88,6 +91,58 @@
       <div class="table-wrap">
         <table id="atbest" class="data findings">
           <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Library -->
+  <section id="tab-library" class="tab-panel" hidden>
+    <div class="kpis">
+      <div class="kpi"><span class="kpi-label">Files below <span id="lib-min">5000</span></span><span id="lib-kpi-low" class="kpi-value">–</span><span id="lib-kpi-low-sub" class="kpi-sub"></span></div>
+      <div class="kpi clickable good" data-lib="fix" title="Show only seasons that already hold the SeaDex best"><span class="kpi-label">Fixable by flags</span><span id="lib-kpi-fix" class="kpi-value">–</span><span class="kpi-sub">files from the SeaDex best group, missing its flags</span></div>
+      <div class="kpi clickable" data-lib="search" title="Show only seasons a search can upgrade"><span class="kpi-label">Upgrade by search</span><span id="lib-kpi-search" class="kpi-value">–</span><span class="kpi-sub">SeaDex lists a better release</span></div>
+      <div class="kpi clickable" data-lib="none" title="Show only seasons nothing can be done about yet"><span class="kpi-label">Nothing to do yet</span><span id="lib-kpi-none" class="kpi-value">–</span><span class="kpi-sub">no SeaDex best, or a group to check</span></div>
+    </div>
+    <div class="card filters">
+      <input id="lib-search" type="search" placeholder="Filter by title or group" aria-label="Filter by title or group">
+      <select id="lib-filter" aria-label="Action">
+        <option value="">Every season below the minimum</option>
+        <option value="fix">Fixable by flags</option>
+        <option value="search">Upgrade by search</option>
+        <option value="none">Nothing to do yet</option>
+      </select>
+      <span class="spacer"></span>
+      <span id="lib-status" class="muted small"></span>
+      <button id="lib-scan" type="button" title="Read every monitored file's custom format score from Sonarr and Radarr now">↻ Scan scores</button>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Seasons and films below the minimum score <span id="lib-count" class="count"></span></h2><div id="lib-bulk" class="controls"></div></div>
+      <p class="muted small">Files that score below the minimum are not on a SeaDex best grab, as far as Sonarr and Radarr know. Where the scout says you already hold the SeaDex best, <strong>Fix flags</strong> gives that group's files the Freeleech25 + Scene flags a best grab carries; files from any other group are left alone. Where SeaDex lists a better release, <strong>Search</strong> asks Sonarr or Radarr to look now.</p>
+      <div class="table-wrap">
+        <table id="lib-rows" class="data">
+          <thead><tr><th>Title</th><th class="num">Low / files</th><th class="num">Lowest</th><th class="opt">Your groups</th><th class="opt">SeaDex best</th><th>Scout says</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Queue -->
+  <section id="tab-queue" class="tab-panel" hidden>
+    <div class="card filters">
+      <label class="toggle"><input id="queue-stuck" type="checkbox" checked> Waiting on me only</label>
+      <span class="spacer"></span>
+      <span id="queue-status" class="muted small"></span>
+      <button id="queue-reload" type="button">↻ Reload</button>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Sonarr and Radarr queues <span id="queue-count" class="count"></span></h2></div>
+      <p class="muted small"><strong>Import</strong> takes the files Sonarr matched to episodes with no file or a file below the minimum score, as hardlinks, with the grab's indexer flags. It overrides only Sonarr's "episode was unexpected" check, which stops packs that hold more than their name says. <strong>Remove</strong> drops the entry from the queue only: the torrent keeps seeding and nothing is blocklisted.</p>
+      <div class="table-wrap">
+        <table id="queue-rows" class="data">
+          <thead><tr><th>Download</th><th>State</th><th class="num">Size</th><th class="opt">Sonarr says</th><th>Actions</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
