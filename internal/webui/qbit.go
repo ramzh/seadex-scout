@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -298,6 +300,43 @@ func (q *Qbit) Delete(ctx context.Context, hash string, deleteFiles bool) error 
 		}
 		return nil
 	}
+}
+
+// Park moves a torrent to its category's "-imported" twin, which has the same
+// save path, so Sonarr or Radarr stop tracking it while it keeps seeding and
+// no file moves (Auto TMM follows the category's path). The twin is created
+// when missing; one with another save path is refused.
+func (q *Qbit) Park(ctx context.Context, hash string) (string, error) {
+	var torrents []QbitTorrent
+	if err := q.readJSON(ctx, "/api/v2/torrents/info?hashes="+url.QueryEscape(hash), &torrents); err != nil {
+		return "", err
+	}
+	if len(torrents) != 1 || torrents[0].Category == "" {
+		return "", errors.New("the torrent or its category was not found in qBittorrent")
+	}
+	t := torrents[0]
+	twin := t.Category + "-imported"
+	var cats map[string]struct {
+		SavePath string `json:"savePath"`
+	}
+	if err := q.readJSON(ctx, "/api/v2/torrents/categories", &cats); err != nil {
+		return "", err
+	}
+	path := cats[t.Category].SavePath
+	if c, ok := cats[twin]; ok && filepath.Clean(c.SavePath) != filepath.Clean(path) {
+		return "", fmt.Errorf("category %s saves to %s, not %s: moving the torrent there would move its files", twin, c.SavePath, path)
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if _, ok := cats[twin]; !ok {
+		if status, body, err := q.post(ctx, "/api/v2/torrents/createCategory", url.Values{"category": {twin}, "savePath": {path}}); err != nil || status/100 != 2 {
+			return "", cmp.Or(err, answerError("creating the category", status, body))
+		}
+	}
+	if status, body, err := q.post(ctx, "/api/v2/torrents/setCategory", url.Values{"hashes": {hash}, "category": {twin}}); err != nil || status/100 != 2 {
+		return "", cmp.Or(err, answerError("the category change", status, body))
+	}
+	return twin, nil
 }
 
 func (q *Qbit) doLimit(ctx context.Context, method, path string, form url.Values, limit int64) (int, string, error) {

@@ -1151,7 +1151,23 @@ func (l *Library) RemoveFromQueue(ctx context.Context, arr string, id int) error
 	if a.version(ctx) == "v5" {
 		q = "?removalMethod=ignore&blocklistMethod=doNotBlocklist"
 	}
-	return a.call(ctx, http.MethodDelete, "/queue/"+strconv.Itoa(id)+q, nil, nil)
+	err = a.call(ctx, http.MethodDelete, "/queue/"+strconv.Itoa(id)+q, nil, nil)
+	if err == nil || l.Qbit == nil || !strings.Contains(err.Error(), " answered 500") {
+		return err
+	}
+	// Sonarr and Radarr fail (NullReference) to drop a download they could
+	// not match to a series or film. Moving the torrent out of their
+	// category drops it from the queue the same way, files untouched.
+	rec, rerr := l.queueRecord(ctx, a, id)
+	if rerr != nil || rec.SeriesID != 0 || rec.MovieID != 0 || rec.DownloadID == "" {
+		return err
+	}
+	twin, perr := l.Qbit.Park(ctx, rec.DownloadID)
+	if perr != nil {
+		return fmt.Errorf("%w; moving the torrent out of the queue's category also failed: %v", err, perr)
+	}
+	l.log.Info("unmatched download moved out of the queue by category; the torrent keeps seeding", "arr", arr, "queue_id", id, "category", twin)
+	return nil
 }
 
 // ImportResult is what ImportQueued sent to Sonarr or Radarr.

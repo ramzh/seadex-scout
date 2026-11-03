@@ -101,3 +101,27 @@ func TestLeftoversKeepWhatMustNotBeDeleted(t *testing.T) {
 		t.Fatalf("deleted %v, want only h2 with its files", deleted)
 	}
 }
+
+func TestParkMovesATorrentToTheImportedTwinOfItsCategory(t *testing.T) {
+	var calls []string
+	qb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		calls = append(calls, r.URL.Path+" "+r.Form.Get("category")+" "+r.Form.Get("savePath"))
+		switch r.URL.Path {
+		case "/api/v2/torrents/info":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"hash": "abc", "category": "anime-film"}})
+		case "/api/v2/torrents/categories":
+			_ = json.NewEncoder(w).Encode(map[string]any{"anime-film": map[string]string{"savePath": "/data/films"}})
+		}
+	}))
+	t.Cleanup(qb.Close)
+	q, _ := NewQbit(QbitConfig{URL: qb.URL})
+	twin, err := q.Park(t.Context(), "abc")
+	if err != nil || twin != "anime-film-imported" {
+		t.Fatalf("park = %q, %v", twin, err)
+	}
+	want := []string{"/api/v2/torrents/createCategory anime-film-imported /data/films", "/api/v2/torrents/setCategory anime-film-imported "}
+	if got := calls[len(calls)-2:]; got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("calls %q, want the twin created at the same path, then set", calls)
+	}
+}
