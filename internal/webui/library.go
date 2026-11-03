@@ -1199,6 +1199,7 @@ type manualImportRow struct {
 	Episodes []struct {
 		ID            int `json:"id"`
 		EpisodeFileID int `json:"episodeFileId"`
+		SeasonNumber  int `json:"seasonNumber"`
 	} `json:"episodes"`
 	Quality      json.RawMessage `json:"quality"`
 	Languages    json.RawMessage `json:"languages"`
@@ -1260,6 +1261,7 @@ func (l *Library) ImportQueued(ctx context.Context, arr string, id int, dry bool
 		flags |= bestFlags(a.name)
 	}
 	res.IndexerFlags = flags
+	bestGrab := flags&bestFlags(a.name) == bestFlags(a.name)
 	q := url.Values{"folder": {rec.OutputPath}, "downloadId": {rec.DownloadID}, "filterExistingFiles": {"false"}}
 	var rows []manualImportRow
 	if err := a.call(ctx, http.MethodGet, "/manualimport?"+q.Encode(), nil, &rows); err != nil {
@@ -1276,12 +1278,16 @@ func (l *Library) ImportQueued(ctx context.Context, arr string, id int, dry bool
 		for _, f := range files {
 			if f.CustomFormatScore >= l.minScore {
 				goodFile[f.ID] = true
-				filmGood = true
+				filmGood = a.name == "radarr" && !(bestGrab && l.seasonBelowBest(a.name, owner, -1))
 			}
 		}
+		// A score at the minimum is no proof the file is the SeaDex best:
+		// older grabs carry the best flags on alts too. When this download
+		// is a best grab and the scout says the season is not at the best,
+		// its files replace what is there.
 		for _, r := range rows {
 			for _, e := range r.Episodes {
-				if goodFile[e.EpisodeFileID] {
+				if goodFile[e.EpisodeFileID] && !(bestGrab && l.seasonBelowBest(a.name, owner, e.SeasonNumber)) {
 					good[e.ID] = true
 				}
 			}
@@ -1399,6 +1405,17 @@ func (l *Library) grabFlags(ctx context.Context, a *arrAPI, downloadID string) (
 		}
 	}
 	return flags, nil
+}
+
+// seasonBelowBest reports that the scout finds a better SeaDex release for
+// the season (or film) than the one on disk.
+func (l *Library) seasonBelowBest(arr string, id, season int) bool {
+	if arr == "radarr" {
+		season = -1
+	}
+	f, ok := l.store.findingFor(Target{Arr: arr, ID: id, Season: season})
+	st := f.Str("status")
+	return ok && (st == "better_release" || st == "newer_revision")
 }
 
 // movieForHash returns the Radarr film whose SeaDex best release has this

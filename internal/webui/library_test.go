@@ -401,3 +401,18 @@ func TestRestartDoesNotRepeatAnUpgradeStillFound(t *testing.T) {
 		t.Fatalf("activity lines reached the recent log: %v", logs)
 	}
 }
+
+func TestABestGrabReplacesFilesScoredBestThatAreNot(t *testing.T) {
+	fake := &fakeSonarr{
+		queue:   []map[string]any{{"id": 5, "seriesId": 7, "outputPath": "/data/pack", "downloadId": "H", "sizeleft": 0}},
+		history: []map[string]any{{"eventType": "grabbed", "data": map[string]string{"indexerFlags": "Scene, Freeleech25"}}},
+		files:   []map[string]any{{"id": 100, "seasonNumber": 1, "customFormatScore": 5000}},
+		rows: []map[string]any{{"path": "/data/pack/01.mkv", "series": map[string]int{"id": 7},
+			"episodes": []any{map[string]int{"id": 1, "episodeFileId": 100, "seasonNumber": 1}}}},
+	}
+	lib := newTestLibrary(t, fake, Line{Attrs: map[string]any{"arr": "sonarr", "arr_id": float64(7), "season": float64(1), "scope": "season", "status": "better_release"}})
+	res, err := lib.ImportQueued(t.Context(), "sonarr", 5, true)
+	if err != nil || res.Done || res.Files != 1 {
+		t.Fatalf("preview %+v, %v; want the best grab to replace the alt scored 5000", res, err)
+	}
+}
