@@ -385,6 +385,11 @@ func (a *Auditor) assess(m *match.Match) reportRow {
 	}
 	listing := align.Listing{Best: best, Alt: alt, BestRevisions: classify.BestRevisions(&m.Entry)}
 	d := align.Decide(m.Item, m.AlignEntry(), &listing)
+	// The same narrowing as compare.compareOne, so the two agree.
+	if d.Outcome == align.OutcomeSuperseded && len(d.Episodes) > 0 {
+		listing.BestRevisions = classify.EpisodeRevisions(&m.Entry, d.Episodes)
+		d = align.Decide(m.Item, m.AlignEntry(), &listing)
+	}
 	row.Scope = d.Kind
 	row.Season = d.Season
 	row.Episodes, row.MissingEpisodes = d.Episodes, d.MissingEpisodes

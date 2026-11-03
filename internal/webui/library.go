@@ -1289,6 +1289,11 @@ func (l *Library) ImportQueued(ctx context.Context, arr string, id int, dry bool
 	if err := a.call(ctx, http.MethodGet, "/manualimport?"+q.Encode(), nil, &rows); err != nil {
 		return res, err
 	}
+	if a.name == "sonarr" && owner > 0 {
+		if err := l.matchByNumber(ctx, a, owner, rows, grabbed); err != nil {
+			return res, err
+		}
+	}
 	good := map[int]bool{} // episode ids whose file already scores high enough
 	filmGood := false
 	if owner > 0 {
@@ -1409,6 +1414,133 @@ func (l *Library) ImportQueued(ctx context.Context, arr string, id int, dry bool
 	delete(l.previews, id)
 	l.mu.Unlock()
 	return res, nil
+}
+
+var (
+	seasonEpisode = regexp.MustCompile(`(?i)\bS(\d{1,2})E(\d{1,4})\b`)
+	bareNumber    = regexp.MustCompile(`[ _.-](\d{1,4})(?:v\d+)?(?:[ _.]|$)`)
+	bracketed     = regexp.MustCompile(`\[[^\]]*\]|\([^)]*\)`)
+	leadingGroup  = regexp.MustCompile(`^\[([^\]]+)\]`)
+)
+
+// matchByNumber matches the episode files of a pack Sonarr left unmatched by
+// the numbers in their names: an absolute number ("Slam Dunk - 046"), an
+// SxxEyy Sonarr has, or, when the pack numbers its season differently
+// (Gintama's S11E01-E14 for Sonarr's S10E13-E26), the grab's episodes in
+// order, only when the counts agree. Two files on one episode drop every guess.
+func (l *Library) matchByNumber(ctx context.Context, a *arrAPI, series int, rows []manualImportRow, grabbed map[int]bool) error {
+	var todo []int
+	for i, r := range rows {
+		if (r.Series == nil || len(r.Episodes) == 0) &&
+			episodeVideo(QbitFile{Name: cmp.Or(r.RelativePath, filepath.Base(r.Path)), Size: r.Size}) {
+			todo = append(todo, i)
+		}
+	}
+	if len(todo) == 0 {
+		return nil
+	}
+	var eps []struct {
+		ID                    int `json:"id"`
+		SeasonNumber          int `json:"seasonNumber"`
+		EpisodeNumber         int `json:"episodeNumber"`
+		AbsoluteEpisodeNumber int `json:"absoluteEpisodeNumber"`
+		EpisodeFileID         int `json:"episodeFileId"`
+	}
+	if err := a.call(ctx, http.MethodGet, "/episode?seriesId="+strconv.Itoa(series), nil, &eps); err != nil {
+		return err
+	}
+	type key struct{ s, e int }
+	bySE, byAbs := map[key]int{}, map[int]int{}
+	var grabOrder []int // indexes into eps, by season and number
+	for i, e := range eps {
+		bySE[key{e.SeasonNumber, e.EpisodeNumber}] = i
+		if e.AbsoluteEpisodeNumber > 0 {
+			byAbs[e.AbsoluteEpisodeNumber] = i
+		}
+		if grabbed[e.ID] {
+			grabOrder = append(grabOrder, i)
+		}
+	}
+	slices.SortFunc(grabOrder, func(x, y int) int {
+		return cmp.Or(cmp.Compare(eps[x].SeasonNumber, eps[y].SeasonNumber), cmp.Compare(eps[x].EpisodeNumber, eps[y].EpisodeNumber))
+	})
+	guess := map[int]int{} // row -> eps index
+	type offRow struct{ row, s, e int }
+	var off []offRow
+	for _, i := range todo {
+		name := filepath.Base(rows[i].Path)
+		if m := seasonEpisode.FindStringSubmatch(name); m != nil {
+			s, _ := strconv.Atoi(m[1])
+			e, _ := strconv.Atoi(m[2])
+			if j, ok := bySE[key{s, e}]; ok {
+				guess[i] = j
+			} else {
+				off = append(off, offRow{i, s, e})
+			}
+			continue
+		}
+		stem := bracketed.ReplaceAllString(strings.TrimSuffix(name, filepath.Ext(name)), " ")
+		if ms := bareNumber.FindAllStringSubmatch(stem+" ", -1); ms != nil {
+			n, _ := strconv.Atoi(ms[len(ms)-1][1])
+			if j, ok := byAbs[n]; ok {
+				guess[i] = j
+			}
+		}
+	}
+	// ponytail: one season renumbered as a whole; mixed renumbering stays manual.
+	if len(off) > 0 && len(off) == len(grabOrder) && !slices.ContainsFunc(off, func(o offRow) bool { return o.s != off[0].s }) {
+		slices.SortFunc(off, func(x, y offRow) int { return cmp.Compare(x.e, y.e) })
+		for k, o := range off {
+			guess[o.row] = grabOrder[k]
+		}
+	}
+	// Names Sonarr could not match often parse to quality Unknown; the
+	// pack's other files carry the real one.
+	var known json.RawMessage
+	for _, r := range rows {
+		var q struct {
+			Quality struct {
+				ID int `json:"id"`
+			} `json:"quality"`
+		}
+		if json.Unmarshal(r.Quality, &q) == nil && q.Quality.ID > 0 {
+			known = r.Quality
+			break
+		}
+	}
+	seen := map[int]bool{}
+	for _, j := range guess {
+		if seen[j] {
+			return nil
+		}
+		seen[j] = true
+	}
+	for i, j := range guess {
+		e := eps[j]
+		rows[i].Series = &struct {
+			ID int `json:"id"`
+		}{series}
+		rows[i].Episodes = []struct {
+			ID            int `json:"id"`
+			EpisodeFileID int `json:"episodeFileId"`
+			SeasonNumber  int `json:"seasonNumber"`
+		}{{e.ID, e.EpisodeFileID, e.SeasonNumber}}
+		// The rejections were about the match the scout just made.
+		rows[i].Rejections = nil
+		rows[i].ReleaseType = "singleEpisode"
+		if m := leadingGroup.FindStringSubmatch(filepath.Base(rows[i].Path)); rows[i].ReleaseGroup == "" && m != nil {
+			rows[i].ReleaseGroup = m[1]
+		}
+		var q struct {
+			Quality struct {
+				ID int `json:"id"`
+			} `json:"quality"`
+		}
+		if known != nil && (json.Unmarshal(rows[i].Quality, &q) != nil || q.Quality.ID == 0) {
+			rows[i].Quality = known
+		}
+	}
+	return nil
 }
 
 // grabFlags reads the indexer flags the download was grabbed with, and the

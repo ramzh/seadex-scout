@@ -8,6 +8,8 @@
 package classify
 
 import (
+	"slices"
+
 	"github.com/cplieger/seadex-scout/internal/filter"
 	"github.com/cplieger/seadex-scout/internal/payload"
 	"github.com/cplieger/seadex-scout/internal/release"
@@ -96,6 +98,40 @@ func BestRevisions(entry *seadex.Entry) map[string]release.Revision {
 		}
 		group := release.NormalizeGroup(t.ReleaseGroup)
 		byGroup[group] = append(byGroup[group], PayloadRevision(t.Files))
+	}
+	out := make(map[string]release.Revision, len(byGroup))
+	for group, revs := range byGroup {
+		out[group] = release.NewestRevision(revs...)
+	}
+	return out
+}
+
+// EpisodeRevisions is BestRevisions over only the files numbered within
+// episodes: a best torrent covering both cours of a split season ("New World
+// - 01v2" to "- 22") must not read part 2 (E12-E22, all v1) behind part 1's
+// reissues. A torrent with no file numbered in range counts whole, as its
+// numbering may restart per part.
+// ponytail: matches the number alone, not the season; a pack whose seasons
+// share numbers counts each season's file, as BestRevisions did.
+func EpisodeRevisions(entry *seadex.Entry, episodes []int) map[string]release.Revision {
+	byGroup := make(map[string][]release.Revision)
+	for i := range entry.Torrents {
+		t := &entry.Torrents[i]
+		if !t.IsBest {
+			continue
+		}
+		var inRange []seadex.File
+		for _, f := range payload.Population(t.Files) {
+			span, ok := payload.Span(payload.EpisodeKeyBase(f.Name))
+			if ok && slices.ContainsFunc(episodes, func(e int) bool { return e >= span.First && e <= span.Last }) {
+				inRange = append(inRange, f)
+			}
+		}
+		if len(inRange) == 0 {
+			inRange = t.Files
+		}
+		group := release.NormalizeGroup(t.ReleaseGroup)
+		byGroup[group] = append(byGroup[group], PayloadRevision(inRange))
 	}
 	out := make(map[string]release.Revision, len(byGroup))
 	for group, revs := range byGroup {

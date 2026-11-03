@@ -81,7 +81,9 @@ func TestWithRangeSwapsTheBareSeasonToken(t *testing.T) {
 	for _, tc := range []struct{ title, label, want string }{
 		{"[CloverKnights] Black Clover S01 [Blu-ray][MKV][1080p]", "S01E01-E51", "[CloverKnights] Black Clover S01E01-E51 [Blu-ray][MKV][1080p]"},
 		{"[sam] Dr. STONE S04", "S04E01-E12", "[sam] Dr. STONE S04E01-E12"},
-		{"[G] Show S02 [BD]", "S01E01-E12", "[G] Show S02 [BD]"},         // another season
+		{"[G] Show S02 [BD]", "S01E13-E25", "[G] Show S01E13-E25 [BD]"},  // a second cour the tracker calls S02
+		{"[G] Show S01 [BD]", "S02", "[G] Show S02 [BD]"},                // a second season the tracker calls S01
+		{"[G] Show S02 [BD]", "S02", "[G] Show S02 [BD]"},                // same season
 		{"[G] Show S01E05 [BD]", "S01E01-E12", "[G] Show S01E05 [BD]"},   // already episodic
 		{"[G] Show S01 S01 [BD]", "S01E01-E12", "[G] Show S01 S01 [BD]"}, // ambiguous
 		{"[G] Show S01 [BD]", "", "[G] Show S01 [BD]"},                   // no range

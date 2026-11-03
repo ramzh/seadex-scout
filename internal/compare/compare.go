@@ -249,6 +249,10 @@ func (c *Comparer) compareOne(m *match.Match) *Finding {
 	// unit lacking a recommended group reads as unlisted (not aligned).
 	listing := align.Listing{Best: recGroups, BestRevisions: classify.BestRevisions(entry)}
 	d := align.Decide(m.Item, m.AlignEntry(), &listing)
+	if d.Outcome == align.OutcomeSuperseded && len(d.Episodes) > 0 {
+		listing.BestRevisions = classify.EpisodeRevisions(entry, d.Episodes)
+		d = align.Decide(m.Item, m.AlignEntry(), &listing)
+	}
 	// The gate must stay ahead of the outcome switch: an offered kind linearizes
 	// to OutcomeUnverifiable, or to OutcomeNoBest on an empty best set, and that
 	// arm's emptyResult would publish a theoretical_best row carrying a bucket

@@ -314,10 +314,18 @@ func episodeLabel(e int) string { return fmt.Sprintf("E%02d", e) }
 // rangeMarker is a season label with an episode or episode range.
 var rangeMarker = regexp.MustCompile(`^S(\d{2})E\d{2,4}(?:-E\d{2,4})?$`)
 
+// servedSeason is the label a search result's bare season token becomes: a
+// rangeMarker, or a bare season label.
+var servedSeason = regexp.MustCompile(`^S(\d{2})(?:E\d{2,4}(?:-E\d{2,4})?)?$`)
+
 // rangeLabel is the label episodeMarker gives a release when it carries an
-// episode range, "" when it gives a bare season label or none.
+// episode range, or the bare season label of an entry whose season in the
+// arr is known, "" otherwise. A tracker titles a second cour "S02" when the
+// arr files it as S01E13-E25 (SPY x FAMILY Part 2), and a second season
+// "S01" (its own group's first): the arr's season is the one that matches.
 func rangeLabel(t *seadex.Torrent, meta *EntryInfo) string {
-	if m := episodeMarker(t, meta); rangeMarker.MatchString(m) {
+	m := episodeMarker(t, meta)
+	if rangeMarker.MatchString(m) || (meta.SeasonKnown && meta.Season > 0 && m == seasonLabel(meta.Season)) {
 		return m
 	}
 	return ""
@@ -327,16 +335,16 @@ func rangeLabel(t *seadex.Torrent, meta *EntryInfo) string {
 // "S01" not followed by an episode.
 var bareSeason = regexp.MustCompile(`\bS(\d{2})\b(?:[^E\d]|$)`)
 
-// withRange swaps the one bare season token of title for label when it names
-// label's season, so Sonarr reads the episodes the release holds instead of
-// the whole season. A title with no such token, or several, is unchanged.
+// withRange swaps the one bare season token of title for label, so Sonarr
+// reads the season and episodes the release holds in its own numbering
+// instead of the tracker's. A title with no such token, or several, is
+// unchanged.
 func withRange(title, label string) string {
-	m := rangeMarker.FindStringSubmatch(label)
-	if m == nil {
+	if !servedSeason.MatchString(label) {
 		return title
 	}
 	hits := bareSeason.FindAllStringSubmatchIndex(title, -1)
-	if len(hits) != 1 || title[hits[0][2]:hits[0][3]] != m[1] {
+	if len(hits) != 1 {
 		return title
 	}
 	return title[:hits[0][0]] + label + title[hits[0][3]:]

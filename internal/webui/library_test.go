@@ -22,6 +22,7 @@ type fakeSonarr struct {
 	rows    []map[string]any
 	bulk    []map[string]any
 	cmds    []map[string]any
+	eps     []map[string]any // GET /episode; two plain episodes when nil
 	roots   []string
 	status  string // GET /command/{id}
 }
@@ -47,6 +48,8 @@ func (f *fakeSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 	case r.URL.Path == "/api/v5/queue":
 		_ = enc.Encode(map[string]any{"records": f.queue})
+	case r.URL.Path == "/api/v5/episode" && f.eps != nil:
+		_ = enc.Encode(f.eps)
 	case r.URL.Path == "/api/v5/episode":
 		_ = enc.Encode([]map[string]int{{"id": 1, "seasonNumber": 1}, {"id": 2, "seasonNumber": 2}})
 	case r.URL.Path == "/api/v5/history":
@@ -446,5 +449,75 @@ func TestEpisodeVideoLeavesOutExtras(t *testing.T) {
 		if got := episodeVideo(QbitFile{Name: name, Size: big}); got != want {
 			t.Errorf("episodeVideo(%q) = %v, want %v", name, got, want)
 		}
+	}
+}
+
+func TestImportQueuedMatchesUnmatchedPacksByNumber(t *testing.T) {
+	big := int64(500 << 20)
+	ep := func(id, s, e, abs, file int) map[string]any {
+		return map[string]any{"id": id, "seasonNumber": s, "episodeNumber": e, "absoluteEpisodeNumber": abs, "episodeFileId": file}
+	}
+	row := func(name string) map[string]any {
+		return map[string]any{"path": "/data/pack/" + name, "size": big,
+			"rejections": []any{map[string]string{"reason": "Invalid season or episode"}}}
+	}
+	imported := func(fake *fakeSonarr) map[string]float64 {
+		out := map[string]float64{}
+		for _, f := range fake.cmds[len(fake.cmds)-1]["files"].([]any) {
+			m := f.(map[string]any)
+			out[m["path"].(string)[len("/data/pack/"):]] = m["episodeIds"].([]any)[0].(float64)
+		}
+		return out
+	}
+	queue := []map[string]any{{"id": 5, "seriesId": 7, "downloadId": "H", "outputPath": "/data/pack", "sizeLeft": 0}}
+	grab := func(ids ...int) []map[string]any {
+		var h []map[string]any
+		for _, id := range ids {
+			h = append(h, map[string]any{"eventType": "grabbed", "episodeId": id, "data": map[string]string{"indexerFlags": "Scene, Freeleech25"}})
+		}
+		return h
+	}
+
+	// Absolute numbers; episode 1 already scores the minimum.
+	abs := &fakeSonarr{queue: queue, history: grab(12),
+		files: []map[string]any{{"id": 100, "seasonNumber": 1, "customFormatScore": 5000}},
+		eps:   []map[string]any{ep(11, 1, 1, 1, 100), ep(12, 2, 1, 2, 0), ep(13, 2, 2, 3, 0)},
+		rows: []map[string]any{row("[BBT-RMX] Slam Dunk - 001 (BD 1080p) [87CC624A].mkv"),
+			row("[BBT-RMX] Slam Dunk - 002 (BD 1080p) [E57A9D9D].mkv"), row("[BBT-RMX] Slam Dunk - 003v2 (BD 1080p).mkv"),
+			row("[BBT-RMX] Slam Dunk - NCOP (BD 1080p).mkv")}}
+	abs.rows[0]["quality"] = map[string]any{"quality": map[string]any{"id": 7, "name": "Bluray-1080p"}}
+	abs.rows[1]["quality"] = map[string]any{"quality": map[string]any{"id": 0, "name": "Unknown"}}
+	if _, err := newTestLibrary(t, abs).ImportQueued(t.Context(), "sonarr", 5, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := imported(abs); len(got) != 2 || got["[BBT-RMX] Slam Dunk - 002 (BD 1080p) [E57A9D9D].mkv"] != 12 ||
+		got["[BBT-RMX] Slam Dunk - 003v2 (BD 1080p).mkv"] != 13 {
+		t.Fatalf("absolute pack imported %v, want 002 as 12 and 003v2 as 13", got)
+	}
+	for _, f := range abs.cmds[0]["files"].([]any) {
+		if g := f.(map[string]any)["releaseGroup"]; g != "BBT-RMX" {
+			t.Errorf("release group %v, want BBT-RMX from the name", g)
+		}
+		if q := f.(map[string]any)["quality"].(map[string]any)["quality"].(map[string]any)["id"]; q != float64(7) {
+			t.Errorf("quality id %v, want 7 borrowed from the pack", q)
+		}
+	}
+
+	// The pack calls the season's second half S11E01-E02; Sonarr has S10E13-E14.
+	renum := &fakeSonarr{queue: queue, history: grab(22, 21),
+		eps:  []map[string]any{ep(20, 10, 12, 353, 0), ep(21, 10, 13, 354, 0), ep(22, 10, 14, 355, 0)},
+		rows: []map[string]any{row("Gintama.S11E02.1080p-Sylvar.mkv"), row("Gintama.S11E01.1080p-Sylvar.mkv")}}
+	if _, err := newTestLibrary(t, renum).ImportQueued(t.Context(), "sonarr", 5, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := imported(renum); got["Gintama.S11E01.1080p-Sylvar.mkv"] != 21 || got["Gintama.S11E02.1080p-Sylvar.mkv"] != 22 {
+		t.Fatalf("renumbered pack imported %v, want S11E01 as 21 and S11E02 as 22", got)
+	}
+
+	// Counts disagree: no guess, nothing imported.
+	renum.history, renum.cmds = grab(21), nil
+	res, err := newTestLibrary(t, renum).ImportQueued(t.Context(), "sonarr", 5, true)
+	if err != nil || res.Files != 0 {
+		t.Fatalf("preview %+v, %v; want no guess when the grab's episodes and files disagree", res, err)
 	}
 }

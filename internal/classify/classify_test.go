@@ -357,3 +357,23 @@ func TestTorrentCarriesFileRevisionNeverNotes(t *testing.T) {
 		t.Errorf("Torrent().Revision with unversioned files = %+v, want v1 (notes are not evidence)", got)
 	}
 }
+
+func TestEpisodeRevisionsReadsOnlyTheScopedEpisodes(t *testing.T) {
+	name := func(n string) seadex.File {
+		return seadex.File{Name: "[sam] Dr. STONE - New World - " + n + " [BD 1080p FLAC].mkv", Length: 1 << 30}
+	}
+	entry := &seadex.Entry{Torrents: []seadex.Torrent{{IsBest: true, ReleaseGroup: "sam",
+		Files: []seadex.File{name("01v2"), name("11v2"), name("12"), name("22"), name("NCOP 01v2")}}}}
+	if got := BestRevisions(entry)["sam"]; got.Version != 2 {
+		t.Fatalf("whole torrent = %+v, want v2", got)
+	}
+	if got := EpisodeRevisions(entry, []int{12, 13, 22})["sam"]; got.Version == 2 {
+		t.Fatalf("E12-E22 = %+v, want the v1 files only", got)
+	}
+	if got := EpisodeRevisions(entry, []int{1, 2})["sam"]; got.Version != 2 {
+		t.Fatalf("E01-E02 = %+v, want v2", got)
+	}
+	if got := EpisodeRevisions(entry, []int{40})["sam"]; got.Version != 2 {
+		t.Fatalf("no file in range = %+v, want the whole torrent's v2", got)
+	}
+}
