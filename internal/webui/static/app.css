@@ -429,3 +429,6 @@ table.data tr.stuck td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 }
 .info-btn:hover { color: var(--accent); border-color: var(--accent); }
 #series-dialog { width: min(900px, calc(100vw - 32px)); }
+
+button.pill { border: 0; cursor: pointer; font-family: inherit; }
+.act-btn.busy { color: var(--accent); border-color: var(--accent); }

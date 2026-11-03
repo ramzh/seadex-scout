@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeSonarr is a Sonarr 5 that answers the calls the library actions make
@@ -21,6 +22,7 @@ type fakeSonarr struct {
 	bulk    []map[string]any
 	cmds    []map[string]any
 	roots   []string
+	status  string // GET /command/{id}
 }
 
 func (f *fakeSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +50,8 @@ func (f *fakeSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = enc.Encode(map[string]any{"records": f.history})
 	case r.URL.Path == "/api/v5/manualimport":
 		_ = enc.Encode(f.rows)
+	case strings.HasPrefix(r.URL.Path, "/api/v5/command/"):
+		_ = enc.Encode(map[string]string{"status": f.status})
 	case r.URL.Path == "/api/v5/command" && r.Method == http.MethodPost:
 		var cmd map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&cmd)
@@ -261,5 +265,41 @@ func TestBestIndexTrustsOnlyPrivateAnimeBytesComments(t *testing.T) {
 	}
 	if _, ok := idx["ab1"]; !ok || len(idx) != 1 {
 		t.Fatalf("index = %v, want only the private AnimeBytes torrent", idx)
+	}
+}
+
+func TestSearchesRunInLineAndReportTheGrab(t *testing.T) {
+	fake := &fakeSonarr{status: "started"}
+	lib := newTestLibrary(t, fake)
+	jobs := []SearchJob{{Target: Target{Arr: "sonarr", ID: 7, Season: 1}}, {Target: Target{Arr: "sonarr", ID: 8, Season: 2}}}
+	if n, err := lib.QueueSearches(jobs, false); err != nil || n != 2 {
+		t.Fatalf("queued %d, %v; want 2", n, err)
+	}
+	if n, _ := lib.QueueSearches(jobs[:1], false); n != 0 {
+		t.Fatal("the same target was put in line twice")
+	}
+	lib.stepSearches(t.Context())
+	if len(fake.cmds) != 1 || fake.cmds[0]["seriesId"] != float64(7) {
+		t.Fatalf("commands %v, want the oldest (series 7) only", fake.cmds)
+	}
+	lib.stepSearches(t.Context())
+	if got := lib.Searches(); got[1].State != "started" || got[0].State != "waiting" || len(fake.cmds) != 1 {
+		t.Fatalf("states %s, %s with %d commands; want started and still waiting", got[1].State, got[0].State, len(fake.cmds))
+	}
+	fake.status = "completed"
+	fake.history = []map[string]any{
+		{"eventType": "grabbed", "date": time.Now().UTC().Format(time.RFC3339), "sourceTitle": "[NAN0] Show S01"},
+		{"eventType": "grabbed", "date": "2020-01-01T00:00:00Z", "sourceTitle": "old grab"},
+	}
+	lib.stepSearches(t.Context())
+	got := lib.Searches()
+	if got[1].State != "grabbed" || len(got[1].Grabbed) != 1 || got[1].Grabbed[0] != "[NAN0] Show S01" {
+		t.Fatalf("finished search = %+v, want grabbed [NAN0] Show S01 only", got[1])
+	}
+	if len(fake.cmds) != 1 {
+		t.Fatal("the next search started before the minute between searches")
+	}
+	if n := lib.CancelSearches(); n != 1 || lib.Searches()[0].State != "cancelled" {
+		t.Fatalf("cancelled %d, want the waiting one", n)
 	}
 }

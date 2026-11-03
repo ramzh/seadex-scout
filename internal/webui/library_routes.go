@@ -55,18 +55,47 @@ func libraryRoutes(app *http.ServeMux, o Options) {
 		w.WriteHeader(http.StatusAccepted)
 		writeJSON(w, o.Library.Scan())
 	})
+	app.HandleFunc("GET /api/searches", func(w http.ResponseWriter, r *http.Request) {
+		if ready(w, r, false) {
+			writeJSON(w, map[string]any{"searches": o.Library.Searches()})
+		}
+	})
+	// search starts one search now; search/bulk puts many in line, one a
+	// minute; search/cancel empties the line.
 	app.HandleFunc("POST /api/arr/search", func(w http.ResponseWriter, r *http.Request) {
-		var t Target
+		var t SearchJob
 		if !ready(w, r, true) || !decode(w, r, &t) {
 			return
 		}
-		id, err := o.Library.Search(r.Context(), t)
+		if _, err := o.Library.QueueSearches([]SearchJob{t}, true); err != nil {
+			fail(w, "search", err)
+			return
+		}
+		o.Log.Info("search asked for from the dashboard", "arr", t.Arr, "arr_id", t.ID, "season", t.Season, "title", t.Title)
+		writeJSON(w, map[string]any{"searches": o.Library.Searches()})
+	})
+	app.HandleFunc("POST /api/arr/search/bulk", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Targets []SearchJob `json:"targets"`
+		}
+		if !ready(w, r, true) || !decode(w, r, &body) {
+			return
+		}
+		n, err := o.Library.QueueSearches(body.Targets, false)
 		if err != nil {
 			fail(w, "search", err)
 			return
 		}
-		o.Log.Info("search started from the dashboard", "arr", t.Arr, "arr_id", t.ID, "season", t.Season, "command", id)
-		writeJSON(w, map[string]int{"command": id})
+		o.Log.Info("searches put in line from the dashboard", "added", n, "asked", len(body.Targets))
+		writeJSON(w, map[string]any{"added": n, "searches": o.Library.Searches()})
+	})
+	app.HandleFunc("POST /api/arr/search/cancel", func(w http.ResponseWriter, r *http.Request) {
+		if !ready(w, r, true) {
+			return
+		}
+		n := o.Library.CancelSearches()
+		o.Log.Info("waiting searches cancelled from the dashboard", "cancelled", n)
+		writeJSON(w, map[string]any{"cancelled": n, "searches": o.Library.Searches()})
 	})
 	app.HandleFunc("POST /api/arr/fixflags", func(w http.ResponseWriter, r *http.Request) {
 		var t Target

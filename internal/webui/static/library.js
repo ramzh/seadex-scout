@@ -10,6 +10,8 @@ const lib = {
   busy: new Map(),  // action key -> label shown while it runs
   done: new Map(),  // action key -> result text
   bulk: null,       // { kind, total, done, failed, stop }
+  searches: [],     // GET api/searches, newest first
+  searchPoll: null,
 };
 
 const POST_HEADERS = { "Content-Type": "application/json", "X-Seadex-Scout": "1" };
@@ -68,6 +70,7 @@ function actionFor(a) {
 function actionKey(kind, t) { return `${kind}:${targetKey(t)}`; }
 
 function actionButton(kind, t, label, title) {
+  if (kind === "search") return searchButton(t, label, title);
   const key = actionKey(kind, t);
   const btn = el("button", { type: "button", class: "act-btn " + kind, title });
   if (lib.busy.has(key)) { btn.textContent = lib.busy.get(key); btn.disabled = true; }
@@ -92,8 +95,8 @@ async function runAction(kind, t, btn) {
       if (lib.scan && r.fixed) lib.scan.seasons = lib.scan.seasons.filter((s) => !(s.arr === t.arr && s.id === t.id && (t.arr === "radarr" || t.season < 0 || s.season === t.season)));
       return true;
     }
-    await postJSON("api/arr/search", t);
-    lib.done.set(key, "Searching ✓");
+    lib.searches = (await postJSON("api/arr/search", t)).searches || [];
+    searchesChanged();
     return true;
   } catch (err) {
     lib.done.delete(key);
@@ -112,6 +115,7 @@ function findingActions(f) {
   const t = targetOf(a);
   const td = el("td", { class: "actions" });
   if (!t) return td;
+  t.title = `${a.title || "?"} · ${seasonLabel(a)}`;
   const score = scoreFor(t);
   const action = actionFor(a);
   if (score) td.append(el("span", { class: "score-badge", title: `Lowest custom format score ${score.min}`, text: `${score.low}/${score.files} below ${lib.scan.min_score}` }));
@@ -140,7 +144,8 @@ async function loadLibrary(force) {
 function libraryRows() {
   const idx = findingIndex(state.snap);
   return ((lib.scan && lib.scan.seasons) || []).map((s) => {
-    const t = { arr: s.arr, id: s.id, season: s.arr === "sonarr" ? s.season : -1 };
+    const t = { arr: s.arr, id: s.id, season: s.arr === "sonarr" ? s.season : -1,
+      title: `${s.title} · ${s.arr === "radarr" ? "Film" : s.season === 0 ? "Specials" : "Season " + s.season}` };
     const f = idx.get(targetKey(t)) || (s.arr === "sonarr" ? idx.get(`sonarr:${s.id}`) : null);
     const a = f ? f.attrs : null;
     let action = a ? actionFor(a) : "";
@@ -202,29 +207,141 @@ function renderBulk(rows) {
   const b = lib.bulk;
   if (b) {
     box.replaceChildren(
-      el("span", { class: "muted small", text: `${b.kind === "fix" ? "Fixing flags" : "Searching"}: ${b.done} of ${b.total}${b.failed ? `, ${b.failed} failed` : ""}${b.wait ? ` · next in ${b.wait}s` : ""}` }),
+      el("span", { class: "muted small", text: `${"Fixing flags"}: ${b.done} of ${b.total}${b.failed ? `, ${b.failed} failed` : ""}` }),
       el("button", { type: "button", onclick: () => { b.stop = true; } }, "Stop"));
     return;
   }
   const fix = rows.filter((r) => r.action === "fix" && !lib.done.has(actionKey("fix", r.t)));
-  const search = rows.filter((r) => r.action === "search" && !lib.done.has(actionKey("search", r.t)));
+  const search = rows.filter((r) => r.action === "search" && !searchOpen(searchFor(r.t)));
+  const waiting = lib.searches.filter((j) => j.state === "waiting").length;
   box.replaceChildren(
     el("button", { type: "button", disabled: !fix.length, title: "Fix the flags of every season shown that holds the SeaDex best", onclick: () => runBulk("fix", fix) }, `Fix flags on ${fix.length} shown`),
-    el("button", { type: "button", disabled: !search.length, title: "Search every season shown, one a minute so the trackers see a trickle", onclick: () => runBulk("search", search) }, `Search ${search.length} shown`));
+    el("button", { type: "button", disabled: !search.length, title: "Put every season shown in line to search, one a minute so the trackers see a trickle. The scout runs the line: the page can be closed.", onclick: () => bulkSearch(search) }, `Search ${search.length} shown`),
+    waiting ? el("button", { type: "button", title: "Drop the searches still waiting in line", onclick: cancelSearches }, `Cancel ${waiting} waiting`) : null);
+}
+
+async function bulkSearch(rows) {
+  if (!confirm(`Search ${rows.length} seasons, one a minute (about ${rows.length} minutes)? The scout runs the line; follow it in the Queue tab.`)) return;
+  try {
+    const r = await postJSON("api/arr/search/bulk", { targets: rows.map((x) => x.t) });
+    lib.searches = r.searches || [];
+    searchesChanged();
+  } catch (err) {
+    alert("Could not start the searches: " + err.message);
+  }
+}
+
+async function cancelSearches() {
+  try {
+    lib.searches = (await postJSON("api/arr/search/cancel")).searches || [];
+    searchesChanged();
+  } catch (err) {
+    alert("Could not cancel: " + err.message);
+  }
+}
+
+// ---------- search progress ----------
+
+function searchOpen(j) { return Boolean(j) && (j.state === "waiting" || j.state === "queued" || j.state === "started"); }
+
+// searchFor is the newest search of a target.
+function searchFor(t) {
+  const k = targetKey(t);
+  return lib.searches.find((j) => targetKey({ arr: j.arr, id: j.id, season: j.season }) === k) || null;
+}
+
+// searchState is how a search shows: label, tag colour, and detail.
+function searchState(j) {
+  if (!j) return null;
+  const line = lib.searches.filter((x) => x.state === "waiting").sort((x, y) => x.added.localeCompare(y.added));
+  switch (j.state) {
+    case "waiting": return { text: `In line #${line.indexOf(j) + 1}`, cls: "", detail: "Waiting for its turn (one search a minute)" };
+    case "queued": return { text: "Queued…", cls: "info", detail: `${arrName(j.arr)} has the search queued` };
+    case "started": return { text: "Searching…", cls: "info", detail: `${arrName(j.arr)} is searching the indexers` };
+    case "grabbed": return { text: "Grabbed ✓", cls: "good", detail: "Grabbed: " + (j.grabbed || []).join(" | ") };
+    case "nothing": return { text: "Nothing grabbed", cls: "warn", detail: (j.message ? j.message + ". " : "") + "No release the profile accepts was found" };
+    case "failed": return { text: "Failed", cls: "bad", detail: j.message || "The search failed" };
+    case "cancelled": return { text: "Cancelled", cls: "", detail: "Dropped from the line" };
+  }
+  return { text: j.state, cls: "", detail: "" };
+}
+
+function searchButton(t, label, title) {
+  const btn = el("button", { type: "button", class: "act-btn search", "data-search": targetKey(t) });
+  btn._label = label;
+  btn._title = title;
+  btn.addEventListener("click", () => runAction("search", t, btn));
+  paintSearchButton(btn, searchFor(t));
+  return btn;
+}
+
+function paintSearchButton(btn, j) {
+  const st = j && j.state !== "cancelled" ? searchState(j) : null;
+  btn.classList.remove("done", "failed", "bad", "busy");
+  btn.disabled = searchOpen(j);
+  if (!st) { btn.textContent = btn._label; btn.title = btn._title; return; }
+  btn.textContent = st.text;
+  btn.title = st.detail + (searchOpen(j) ? "" : "\nClick to search again");
+  if (j.state === "grabbed") btn.classList.add("done");
+  else if (j.state === "failed") btn.classList.add("failed");
+  else if (searchOpen(j)) btn.classList.add("busy");
+}
+
+async function loadSearches() {
+  try {
+    lib.searches = (await getJSON("api/searches")).searches || [];
+  } catch {
+    return;
+  }
+  searchesChanged();
+}
+
+// searchesChanged repaints the search buttons, the header pill and the
+// Searches card, and polls while a search is unfinished.
+function searchesChanged() {
+  const open = lib.searches.filter(searchOpen);
+  if (open.length && !lib.searchPoll) lib.searchPoll = setInterval(loadSearches, 5000);
+  if (!open.length && lib.searchPoll) { clearInterval(lib.searchPoll); lib.searchPoll = null; }
+  const byKey = new Map();
+  for (const j of lib.searches) {
+    const k = targetKey({ arr: j.arr, id: j.id, season: j.season });
+    if (!byKey.has(k)) byKey.set(k, j);
+  }
+  for (const btn of document.querySelectorAll("button[data-search]")) paintSearchButton(btn, byKey.get(btn.dataset.search) || null);
+  const pill = $("search-pill");
+  const running = open.filter((j) => j.state !== "waiting").length;
+  const waiting = open.length - running;
+  pill.hidden = !open.length;
+  pill.textContent = running ? `Searching${waiting ? ` · ${waiting} in line` : "…"}` : `${waiting} searches in line`;
+  renderSearches();
+  if (state.tab === "library" && lib.scan) renderBulk(libraryRows());
+}
+
+function renderSearches() {
+  const list = lib.searches;
+  const open = list.filter(searchOpen).length;
+  $("searches-count").textContent = list.length;
+  $("searches-cancel").hidden = !list.some((j) => j.state === "waiting");
+  $("searches-status").textContent = open ? `${open} unfinished · updates every 5 s` : list.length ? "All finished" : "";
+  const now = Date.now();
+  setRows($("searches-rows").tBodies[0], list.map((j) => {
+    const st = searchState(j);
+    return el("tr", {},
+      el("td", {}, j.title || `${arrName(j.arr)} #${j.id}`, el("span", { class: "sub", text: arrName(j.arr) + (j.command ? ` · command ${j.command}` : "") })),
+      el("td", {}, el("span", { class: "tag " + st.cls, text: st.text })),
+      el("td", { class: "small", text: j.started ? ago(j.started, now) : `asked ${ago(j.added, now)}` }),
+      el("td", { class: "small" }, j.grabbed && j.grabbed.length ? j.grabbed.map((g) => el("div", { text: g })) : st.detail));
+  }), 4, "No search asked for since the scout started.");
 }
 
 async function runBulk(kind, rows) {
   if (!rows.length) return;
-  if (kind === "search" && !confirm(`Search ${rows.length} seasons, one a minute (about ${rows.length} minutes)? Keep this page open.`)) return;
-  const b = lib.bulk = { kind, total: rows.length, done: 0, failed: 0, stop: false, wait: 0 };
-  for (const [i, r] of rows.entries()) {
+  const b = lib.bulk = { kind, total: rows.length, done: 0, failed: 0, stop: false };
+  for (const r of rows) {
     if (b.stop) break;
     if (!(await runAction(kind, r.t))) b.failed++;
     b.done++;
     renderLibraryTab();
-    if (kind === "search" && i < rows.length - 1) {
-      for (b.wait = 60; b.wait > 0 && !b.stop; b.wait--) { renderLibraryTab(); await new Promise((ok) => setTimeout(ok, 1000)); }
-    }
   }
   lib.bulk = null;
   renderLibraryTab();
@@ -461,6 +578,9 @@ function onTabShown(name) {
   }
   $("queue-reload").addEventListener("click", loadQueue);
   $("left-scan").addEventListener("click", () => loadLeftovers(true));
+  $("searches-cancel").addEventListener("click", cancelSearches);
+  $("search-pill").addEventListener("click", () => showTab("queue"));
+  loadSearches();
   $("series-close").addEventListener("click", () => $("series-dialog").close());
   for (const id of ["queue-search", "queue-filter"]) $(id).addEventListener("input", renderQueue);
   for (const id of ["left-search", "left-filter"]) $(id).addEventListener("input", renderLeftovers);

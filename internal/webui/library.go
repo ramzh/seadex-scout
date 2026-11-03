@@ -153,6 +153,10 @@ type Library struct {
 	mu       sync.Mutex
 	scan     ScoreScan
 	lastScan time.Time
+
+	searches   []SearchJob // newest first
+	lastSearch time.Time
+	searchWake chan struct{}
 }
 
 // NewLibrary returns the library actions for the arrs set up (a zero Arr
@@ -162,7 +166,7 @@ func NewLibrary(sonarr, radarr Arr, minScore int, store *Store, log *slog.Logger
 		minScore = DefaultMinScore
 	}
 	return &Library{sonarr: newArrAPI("sonarr", sonarr), radarr: newArrAPI("radarr", radarr),
-		store: store, log: log, minScore: minScore}
+		store: store, log: log, minScore: minScore, searchWake: make(chan struct{}, 1)}
 }
 
 func (l *Library) arr(name string) (*arrAPI, error) {
@@ -590,6 +594,7 @@ func (l *Library) Run(ctx context.Context) {
 	if l.sonarr == nil && l.radarr == nil {
 		return
 	}
+	go l.runSearches(ctx)
 	wait := time.Minute
 	for {
 		select {

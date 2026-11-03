@@ -19,6 +19,7 @@
     </div>
   </div>
   <div class="topbar-right">
+    <button id="search-pill" type="button" class="pill info" hidden title="Searches running or in line: open the Queue tab"></button>
     <span id="status-pill" class="pill">…</span>
     <button id="theme-toggle" class="icon-btn" type="button" title="Toggle light or dark theme" aria-label="Toggle theme">◐</button>
   </div>
@@ -148,6 +149,16 @@
       <span class="spacer"></span>
       <span id="queue-status" class="muted small"></span>
       <button id="queue-reload" type="button">↻ Reload</button>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Searches <span id="searches-count" class="count"></span></h2><div class="controls"><span id="searches-status" class="muted small"></span><button id="searches-cancel" type="button" hidden>Cancel waiting</button></div></div>
+      <p class="muted small">Every <strong>Search</strong> from the dashboard, followed to the end: in line, queued, searching, then what it grabbed. Bulk searches start one a minute and run in the scout, so the page can be closed. A grab then shows in the queue below.</p>
+      <div class="table-wrap">
+        <table id="searches-rows" class="data">
+          <thead><tr><th>Search</th><th>Status</th><th>Started</th><th>Result</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </div>
     <div class="card">
       <div class="card-head"><h2>Sonarr and Radarr queues <span id="queue-count" class="count"></span></h2></div>
