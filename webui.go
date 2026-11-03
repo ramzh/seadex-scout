@@ -179,6 +179,11 @@ func (w *webUIRuntime) start(ctx context.Context, cfg *config.Config) func() {
 			categories = append(categories, c)
 		}
 	}
+	leftovers := webui.NewLeftovers(library, qbit, categories)
+	if leftovers != nil {
+		// The list lives in memory only, so a restart fills it again.
+		_ = leftovers.Start(ctx)
+	}
 
 	srv := webui.NewServer(webui.Options{
 		Addr:      w.addr,
@@ -192,7 +197,7 @@ func (w *webUIRuntime) start(ctx context.Context, cfg *config.Config) func() {
 		Usenet:    newUsenet(log),
 		Refresher: webui.NewLibraryRefresher(ctx, refreshAll, w.store),
 		Library:   library,
-		Leftovers: webui.NewLeftovers(library, qbit, categories),
+		Leftovers: leftovers,
 		Ctx:       ctx,
 		Log:       log,
 	})
