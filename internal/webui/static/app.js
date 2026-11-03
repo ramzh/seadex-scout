@@ -127,6 +127,35 @@ function seasonLabel(a) {
   return s === 0 ? "Specials" : `Season ${s}`;
 }
 
+// toast shows a short message in the corner; a click dismisses it.
+function toast(text, cls = "", ms = 6000) {
+  const t = el("div", { class: "toast " + cls, text, onclick: () => t.remove() });
+  $("toasts").append(t);
+  setTimeout(() => t.remove(), ms);
+}
+
+// setBadge puts a count on a tab, or hides it at zero.
+function setBadge(tab, n, cls = "") {
+  const b = $("badge-" + tab);
+  if (!b) return;
+  b.hidden = !n;
+  b.className = "badge " + cls;
+  b.textContent = n > 999 ? "999+" : String(n || "");
+}
+
+// remember keeps a filter's value in this browser, so it survives a reload.
+function remember(id) {
+  const node = $(id);
+  const key = "seadex-scout:" + id;
+  try {
+    const v = localStorage.getItem(key);
+    if (v !== null) node.type === "checkbox" ? (node.checked = v === "1") : (node.value = v);
+  } catch { /* storage blocked: filters just reset */ }
+  node.addEventListener("input", () => {
+    try { localStorage.setItem(key, node.type === "checkbox" ? (node.checked ? "1" : "0") : node.value); } catch { /* ignore */ }
+  });
+}
+
 function setRows(tbody, rows, cols, emptyText) {
   tbody.replaceChildren(...(rows.length ? rows : [el("tr", {}, el("td", { colspan: cols, class: "empty", text: emptyText }))]));
 }
@@ -317,8 +346,9 @@ function render() {
   renderActivity(snap);
   renderHealth(snap);
   if (state.tab === "reports") renderReportJob(snap.report_job);
-  // The Library tab joins its rows to the findings, which may arrive after it.
-  if (state.tab === "library" && lib.scan) renderLibraryTab();
+  // The Library tab (and its badge) joins its rows to the findings, which
+  // may arrive after it.
+  if (lib.scan) renderLibraryTab();
 }
 
 // ---------- render: overview ----------
@@ -433,6 +463,7 @@ function renderOverview(snap) {
   const upgradesShown = todo.filter((f) => kindOf(f) === "upgrade").length;
   const optional = rows.filter(isOptional).length;
   $("kpi-upgrades").textContent = ready ? upgradesShown : "–";
+  setBadge("overview", ready ? upgradesShown : 0, "info");
   $("kpi-upgrades-sub").textContent = optional && !showOptional ? `${optional} more optional (you have an alt)` : "better releases and newer versions";
   for (const [id, kind] of [["kpi-missing", "missing"], ["kpi-groups", "groups"], ["kpi-nobest", "nobest"]]) {
     $(id).textContent = ready ? rows.filter((f) => kindOf(f) === kind).length : "–";
@@ -463,7 +494,9 @@ function renderOverview(snap) {
   const why = $("upgrades-why").value;
   renderFindings("upgrades", todo.filter((f) => !why || kindOf(f) === why), now,
     ready ? "Nothing to do. Your library is on SeaDex's picks." : "Waiting for the first check.");
-  renderFindings("atbest", atBest, now, ready ? "None yet." : "Waiting for the first check.");
+  // Hundreds of rows: drawn only while unfolded.
+  if ($("atbest-fold").open) renderFindings("atbest", atBest, now, ready ? "None yet." : "Waiting for the first check.");
+  else $("atbest-count").textContent = atBest.length;
 }
 
 const LIBRARY_BARS = [
@@ -952,7 +985,12 @@ function altCell(a, entry) {
 
 function renderActivity(snap) {
   const now = new Date(snap.now).getTime();
-  const events = (snap.events || []).slice().reverse();
+  const show = $("events-filter").value;
+  const q = $("events-search").value.trim().toLowerCase();
+  const kindOfEvent = (e) => e.msg !== "upgrade found" ? "resolved" : e.attrs && e.attrs.after_start ? "start" : "new";
+  const events = (snap.events || []).slice().reverse()
+    .filter((e) => (!show || kindOfEvent(e) === show) && (!q || String((e.attrs || {}).title || "").toLowerCase().includes(q)));
+  $("events-count").textContent = events.length;
   setRows($("events").tBodies[0], events.map((e) => {
     const a = e.attrs || {};
     const found = e.msg === "upgrade found";
@@ -1278,8 +1316,24 @@ function init() {
   initTheme();
   initTabs();
   for (const id of ["upgrades-search", "upgrades-arr", "upgrades-why", "upgrades-optional", "upgrades-unmonitored"]) {
+    if (id !== "upgrades-search") remember(id);
     $(id).addEventListener("input", () => state.snap && renderOverview(state.snap));
   }
+  $("atbest-fold").addEventListener("toggle", () => state.snap && renderOverview(state.snap));
+  for (const id of ["events-search", "events-filter"]) $(id).addEventListener("input", () => state.snap && renderActivity(state.snap));
+  // "/" jumps to the open tab's filter box, as on most sites.
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key !== "/" || ev.ctrlKey || ev.metaKey || ev.altKey || /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+    const box = document.querySelector(`#tab-${state.tab} input[type="search"]`);
+    if (box) { ev.preventDefault(); box.focus(); box.select(); }
+  });
+  // The explanations start open on a first visit, then stay folded.
+  try {
+    if (!localStorage.getItem("seadex-scout:seen-help")) {
+      for (const d of document.querySelectorAll("details.help")) d.open = true;
+      localStorage.setItem("seadex-scout:seen-help", "1");
+    }
+  } catch { /* storage blocked: they stay folded */ }
   $("report-run").addEventListener("click", runReport);
   $("notify-test").addEventListener("click", sendTestNotification);
   $("qbit-test").addEventListener("click", testQbit);

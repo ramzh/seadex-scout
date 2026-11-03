@@ -26,10 +26,10 @@
 </header>
 
 <nav class="tabs" role="tablist">
-  <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
-  <button role="tab" data-tab="library">Library</button>
-  <button role="tab" data-tab="queue">Queue</button>
-  <button role="tab" data-tab="torrents">Torrents</button>
+  <button role="tab" data-tab="overview" aria-selected="true">Overview<span id="badge-overview" class="badge" hidden></span></button>
+  <button role="tab" data-tab="library">Library<span id="badge-library" class="badge" hidden></span></button>
+  <button role="tab" data-tab="queue">Queue<span id="badge-queue" class="badge" hidden></span></button>
+  <button role="tab" data-tab="torrents">Torrents<span id="badge-torrents" class="badge" hidden></span></button>
   <button role="tab" data-tab="activity">Activity</button>
   <button role="tab" data-tab="health">Scout health</button>
   <button role="tab" data-tab="reports">Reports</button>
@@ -59,7 +59,7 @@
     </div>
 
     <div class="card filters">
-      <input id="upgrades-search" type="search" placeholder="Filter by title or group" aria-label="Filter by title or group">
+      <input id="upgrades-search" type="search" placeholder="Filter by title or group" title="Press / to jump here" aria-label="Filter by title or group">
       <select id="upgrades-arr" aria-label="App"><option value="">Sonarr and Radarr</option><option value="sonarr">Sonarr</option><option value="radarr">Radarr</option></select>
       <select id="upgrades-why" aria-label="Why">
         <option value="">Everything to do</option>
@@ -78,7 +78,7 @@
 
     <div class="card">
       <div class="card-head"><h2>Upgrades available <span id="upgrades-count" class="count"></span></h2></div>
-      <p class="muted small">Upgrades come first, newer versions of your group leading, then entries not downloaded, then ones whose release group needs a look, then entries SeaDex names no best for. Optional upgrades are ones where you already have a SeaDex alt. Each size shows the download, and below it how much your library grows (+) or shrinks (−). A change marked ≈ is the download against everything on disk for that season or film, used when its files could not be matched to yours one by one.</p>
+      <details class="help"><summary>How this works</summary><p class="muted small">Upgrades come first, newer versions of your group leading, then entries not downloaded, then ones whose release group needs a look, then entries SeaDex names no best for. Optional upgrades are ones where you already have a SeaDex alt. Each size shows the download, and below it how much your library grows (+) or shrinks (−). A change marked ≈ is the download against everything on disk for that season or film, used when its files could not be matched to yours one by one.</p></details>
       <div class="table-wrap">
         <table id="upgrades" class="data findings">
           <thead></thead>
@@ -90,12 +90,14 @@
     <div class="card">
       <div class="card-head"><h2>Already on a SeaDex pick <span id="atbest-count" class="count"></span></h2></div>
       <p class="muted small">Seasons and films you hold at SeaDex's best, or at an alt where SeaDex names no best. A negative alt size change is disk space an alt would save.</p>
+      <details id="atbest-fold" class="fold"><summary>Show them</summary>
       <div class="table-wrap">
         <table id="atbest" class="data findings">
           <thead></thead>
           <tbody></tbody>
         </table>
       </div>
+      </details>
     </div>
   </section>
 
@@ -109,7 +111,7 @@
       <div class="kpi clickable" data-lib="unmatched" title="Show only titles the scout could not match to a SeaDex entry"><span class="kpi-label">Not matched</span><span id="lib-kpi-unmatched" class="kpi-value">–</span><span class="kpi-sub">no SeaDex entry or no AniDB↔TVDB mapping</span></div>
     </div>
     <div class="card filters">
-      <input id="lib-search" type="search" placeholder="Filter by title or group" aria-label="Filter by title or group">
+      <input id="lib-search" type="search" placeholder="Filter by title or group" title="Press / to jump here" aria-label="Filter by title or group">
       <select id="lib-filter" aria-label="Action">
         <option value="">Every season below the minimum</option>
         <option value="fix">Fixable by flags</option>
@@ -123,10 +125,10 @@
     </div>
     <div class="card">
       <div class="card-head"><h2>Seasons and films below the minimum score <span id="lib-count" class="count"></span></h2><div id="lib-bulk" class="controls"></div></div>
-      <p class="muted small">Files that score below the minimum are not on a SeaDex best grab, as far as Sonarr and Radarr know. Where the scout says you already hold the SeaDex best, or a file was imported from a torrent SeaDex marks as best, <strong>Fix flags</strong> gives those files the Freeleech25 + Scene flags a best grab carries; other files are left alone. <strong>Not matched</strong> titles have no SeaDex entry the scout could map to them, so searching will not help. Where SeaDex lists a better release, <strong>Search</strong> asks Sonarr or Radarr to look now.</p>
+      <details class="help"><summary>How this works</summary><p class="muted small">Files that score below the minimum are not on a SeaDex best grab, as far as Sonarr and Radarr know. Where the scout says you already hold the SeaDex best, or a file was imported from a torrent SeaDex marks as best, <strong>Fix flags</strong> gives those files the Freeleech25 + Scene flags a best grab carries; other files are left alone. <strong>Not matched</strong> titles have no SeaDex entry the scout could map to them, so searching will not help. Where SeaDex lists a better release, <strong>Search</strong> asks Sonarr or Radarr to look now.</p></details>
       <div class="table-wrap">
         <table id="lib-rows" class="data">
-          <thead><tr><th>Title</th><th class="num">Low / files</th><th class="num">Lowest</th><th class="opt">Your groups</th><th class="opt">SeaDex best</th><th>Scout says</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Title</th><th class="num">Low / files</th><th class="num opt" title="The lowest custom format score among the season's files">Lowest</th><th class="opt">Your groups</th><th class="opt">SeaDex best</th><th>Scout says</th><th>Actions</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -136,7 +138,7 @@
   <!-- Queue -->
   <section id="tab-queue" class="tab-panel" hidden>
     <div class="card filters">
-      <input id="queue-search" type="search" placeholder="Filter by title" aria-label="Filter by title">
+      <input id="queue-search" type="search" placeholder="Filter by title" title="Press / to jump here" aria-label="Filter by title">
       <select id="queue-filter" aria-label="Status">
         <option value="stuck">Waiting on you</option>
         <option value="">Every download</option>
@@ -151,18 +153,18 @@
       <button id="queue-reload" type="button">↻ Reload</button>
     </div>
     <div class="card">
-      <div class="card-head"><h2>Searches <span id="searches-count" class="count"></span></h2><div class="controls"><span id="searches-status" class="muted small"></span><button id="searches-cancel" type="button" hidden>Cancel waiting</button></div></div>
-      <p class="muted small">Every <strong>Search</strong> from the dashboard, followed to the end: in line, queued, searching, then what it grabbed. Bulk searches start one a minute and run in the scout, so the page can be closed. A grab then shows in the queue below.</p>
+      <div class="card-head"><h2>Searches <span id="searches-count" class="count"></span></h2><div class="controls"><span id="searches-status" class="muted small"></span><button id="searches-cancel" type="button" hidden>Cancel waiting</button><button id="searches-clear" type="button" hidden title="Forget the finished searches">Clear finished</button></div></div>
+      <details class="help"><summary>How this works</summary><p class="muted small">Every <strong>Search</strong> from the dashboard, followed to the end: in line, queued, searching, then what it grabbed. Bulk searches start one a minute and run in the scout, so the page can be closed. A grab then shows in the queue below.</p></details>
       <div class="table-wrap">
         <table id="searches-rows" class="data">
-          <thead><tr><th>Search</th><th>Status</th><th>Started</th><th>Result</th></tr></thead>
+          <thead><tr><th>Search</th><th>Status</th><th class="opt">Started</th><th>Result</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
     </div>
     <div class="card">
       <div class="card-head"><h2>Sonarr and Radarr queues <span id="queue-count" class="count"></span></h2></div>
-      <p class="muted small"><strong>Import</strong> takes the files Sonarr matched to episodes with no file or a file below the minimum score, as hardlinks, with the grab's indexer flags. It overrides only Sonarr's "episode was unexpected" check, which stops packs that hold more than their name says. <strong>Remove</strong> drops the entry from the queue only: the torrent keeps seeding and nothing is blocklisted. A pack whose matched files are all imported already shows <strong>Already imported</strong>: its extra files keep it queued, so remove it (auto mode does this every 30 minutes).</p>
+      <details class="help"><summary>How this works</summary><p class="muted small"><strong>Import</strong> takes the files Sonarr matched to episodes with no file or a file below the minimum score, as hardlinks, with the grab's indexer flags. It overrides only Sonarr's "episode was unexpected" check, which stops packs that hold more than their name says. <strong>Remove</strong> drops the entry from the queue only: the torrent keeps seeding and nothing is blocklisted. A pack whose matched files are all imported already shows <strong>Already imported</strong>: its extra files keep it queued, so remove it (auto mode does this every 30 minutes).</p></details>
       <div class="table-wrap">
         <table id="queue-rows" class="data">
           <thead><tr><th>Download</th><th>Status</th><th class="num">Size</th><th class="opt">Sonarr says</th><th>Actions</th></tr></thead>
@@ -175,7 +177,7 @@
   <!-- Torrents -->
   <section id="tab-torrents" class="tab-panel" hidden>
     <div class="card filters">
-      <input id="left-search" type="search" placeholder="Filter by name" aria-label="Filter by name">
+      <input id="left-search" type="search" placeholder="Filter by name" title="Press / to jump here" aria-label="Filter by name">
       <select id="left-filter" aria-label="Status">
         <option value="">Every leftover</option>
         <option value="delete">Can be deleted</option>
@@ -189,7 +191,7 @@
     </div>
     <div class="card">
       <div class="card-head"><h2>Torrents not in the library <span id="left-count" class="count"></span></h2><span id="left-total" class="muted small"></span></div>
-      <p class="muted small">None of these torrents' files is hardlinked into a Sonarr or Radarr root folder any more, so they only take space. <strong>Delete</strong> removes the torrent and its data in qBittorrent, after checking again. Torrents from a private tracker (AnimeBytes included), torrents that share files with another torrent, and torrents with missing files are listed but never offered for deletion.</p>
+      <details class="help"><summary>How this works</summary><p class="muted small">None of these torrents' files is hardlinked into a Sonarr or Radarr root folder any more, so they only take space. <strong>Delete</strong> removes the torrent and its data in qBittorrent, after checking again. Torrents from a private tracker (AnimeBytes included), torrents that share files with another torrent, and torrents with missing files are listed but never offered for deletion.</p></details>
       <div class="table-wrap">
         <table id="left-rows" class="data">
           <thead><tr><th>Torrent</th><th class="num">Size</th><th class="opt">Added</th><th>Status</th><th>Actions</th></tr></thead>
@@ -202,7 +204,13 @@
   <!-- Activity -->
   <section id="tab-activity" class="tab-panel" hidden>
     <div class="card">
-      <div class="card-head"><h2>Upgrade activity</h2><span class="muted small">Upgrades entering and leaving the list</span></div>
+      <div class="card-head"><h2>Upgrade activity <span id="events-count" class="count"></span></h2>
+        <div class="controls">
+          <input id="events-search" type="search" placeholder="Filter by title" title="Press / to jump here" aria-label="Filter by title">
+          <select id="events-filter" aria-label="Event"><option value="">Every event</option><option value="new">New upgrades</option><option value="resolved">Resolved</option><option value="start">Found at start</option></select>
+        </div>
+      </div>
+      <p class="muted small">Upgrades entering and leaving the list. A restart finds the open ones again; those already listed are not repeated.</p>
       <div class="table-wrap">
         <table id="events" class="data">
           <thead><tr><th>When</th><th>Event</th><th>Title</th><th>You have</th><th>SeaDex best</th></tr></thead>
@@ -235,6 +243,7 @@
     <div class="card">
       <div class="card-head"><h2>Hidden as unmonitored <span id="hidden-count" class="count"></span></h2></div>
       <p id="hidden-status" class="muted small"></p>
+      <details class="fold"><summary>Show the hidden rows</summary>
       <p class="muted small">These rows are hidden while Show unmonitored is off. The reason says which Sonarr or Radarr flag hides each one.</p>
       <div class="table-wrap">
         <table id="hidden-rows" class="data">
@@ -242,6 +251,7 @@
           <tbody></tbody>
         </table>
       </div>
+      </details>
     </div>
 
     <div class="card">
@@ -331,7 +341,7 @@
       <div class="card-head">
         <h2 id="report-title">Report</h2>
         <div class="controls">
-          <input id="report-search" type="search" placeholder="Filter by title or group" aria-label="Filter report rows">
+          <input id="report-search" type="search" placeholder="Filter by title or group" title="Press / to jump here" aria-label="Filter report rows">
           <select id="report-verdict" aria-label="Verdict"><option value="">Every verdict</option></select>
         </div>
       </div>
@@ -353,7 +363,7 @@
         <h2>Recent log</h2>
         <div class="controls">
           <select id="log-level" aria-label="Lowest level"><option value="INFO">Info and above</option><option value="WARN">Warnings and errors</option><option value="ERROR">Errors only</option></select>
-          <input id="log-search" type="search" placeholder="Filter" aria-label="Filter log">
+          <input id="log-search" type="search" placeholder="Filter" title="Press / to jump here" aria-label="Filter log">
         </div>
       </div>
       <p class="muted small">The newest 500 lines, without per-finding and Torznab request lines. <code>docker logs seadex-scout</code> has everything.</p>
@@ -390,6 +400,8 @@
     </table>
   </div>
 </dialog>
+
+<div id="toasts" class="toasts" role="status" aria-live="polite"></div>
 
 <footer class="muted small">
   <span id="footer-text"></span>

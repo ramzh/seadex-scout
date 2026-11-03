@@ -97,6 +97,13 @@ func libraryRoutes(app *http.ServeMux, o Options) {
 		o.Log.Info("waiting searches cancelled from the dashboard", "cancelled", n)
 		writeJSON(w, map[string]any{"cancelled": n, "searches": o.Library.Searches()})
 	})
+	app.HandleFunc("POST /api/arr/search/clear", func(w http.ResponseWriter, r *http.Request) {
+		if !ready(w, r, true) {
+			return
+		}
+		o.Library.ClearSearches()
+		writeJSON(w, map[string]any{"searches": o.Library.Searches()})
+	})
 	app.HandleFunc("POST /api/arr/fixflags", func(w http.ResponseWriter, r *http.Request) {
 		var t Target
 		if !ready(w, r, true) || !decode(w, r, &t) {

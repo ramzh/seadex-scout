@@ -100,6 +100,14 @@ func (l *Library) CancelSearches() int {
 	return n
 }
 
+// ClearSearches forgets every finished search.
+func (l *Library) ClearSearches() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.searches = slices.DeleteFunc(l.searches, func(j SearchJob) bool { return !j.open() })
+	l.persistLocked()
+}
+
 func (l *Library) wakeSearches() {
 	select {
 	case l.searchWake <- struct{}{}:

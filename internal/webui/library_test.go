@@ -381,3 +381,23 @@ func TestImportQueuedPlacesAnUnknownFilmBySeaDexHash(t *testing.T) {
 		t.Fatalf("imported %v; want film.mkv as movie 5 with the best flags", f)
 	}
 }
+
+func TestRestartDoesNotRepeatAnUpgradeStillFound(t *testing.T) {
+	st := NewStore("")
+	found := func(after bool) Line {
+		return Line{Msg: "upgrade found", Attrs: map[string]any{"arr": "sonarr", "al_id": float64(1), "season": float64(1), "after_start": after}}
+	}
+	st.Observe(found(false))
+	st.Observe(found(true)) // a restart finds it again
+	if n := len(st.s.Events); n != 1 {
+		t.Fatalf("%d events, want the first find only", n)
+	}
+	st.Observe(Line{Msg: "upgrade resolved", Attrs: map[string]any{"arr": "sonarr", "al_id": float64(1), "season": float64(1)}})
+	st.Observe(found(true))
+	if n := len(st.s.Events); n != 3 {
+		t.Fatalf("%d events, want found, resolved, found again", n)
+	}
+	if logs := st.Logs(); len(logs) != 0 {
+		t.Fatalf("activity lines reached the recent log: %v", logs)
+	}
+}

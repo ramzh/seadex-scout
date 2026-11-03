@@ -176,6 +176,7 @@ function renderLibraryTab() {
     (!q || [r.s.title, ...(r.s.groups || []), r.a && r.a.recommended_group].some((v) => typeof v === "string" && v.toLowerCase().includes(q))));
 
   const count = (k) => all.filter((r) => r.action === k).reduce((n, r) => n + (k === "fix" ? r.s.fixable : r.s.low), 0);
+  setBadge("library", all.filter((r) => (r.action === "fix" || r.action === "search") && !(r.action === "search" && searchOpen(searchFor(r.t)))).length, "info");
   $("lib-kpi-low").textContent = scan.finished_at ? (scan.low_files || 0).toLocaleString() : "–";
   $("lib-kpi-low-sub").textContent = `in ${all.length} seasons and movies`;
   $("lib-kpi-fix").textContent = scan.finished_at ? count("fix").toLocaleString() : "–";
@@ -194,7 +195,7 @@ function renderLibraryTab() {
     return el("tr", {},
       el("td", {}, r.a ? link(r.a.arr_url, r.s.title) : r.s.title, " ", seriesButton(r.s.arr, r.s.id, r.s.title), el("span", { class: "sub", text: `${arrName(r.s.arr)} · ${r.s.arr === "radarr" ? "Film" : r.s.season === 0 ? "Specials" : "Season " + r.s.season}` })),
       el("td", { class: "num", text: `${r.s.low} / ${r.s.files}` }),
-      el("td", { class: "num", text: String(r.s.min_score) }),
+      el("td", { class: "num opt", text: String(r.s.min_score) }),
       Object.assign(groupList(r.s.groups, ""), { className: "groups opt" }),
       el("td", { class: "opt", text: r.a ? (r.a.recommended_group || (r.a.alt_group ? `${r.a.alt_group} (alt)` : "–")) : "–" }),
       el("td", {}, el("span", { class: "tag " + why.cls, text: why.text })),
@@ -216,10 +217,11 @@ function renderBulk(rows) {
   const fix = rows.filter((r) => r.action === "fix" && !lib.done.has(actionKey("fix", r.t)));
   const search = rows.filter((r) => r.action === "search" && !searchOpen(searchFor(r.t)));
   const waiting = lib.searches.filter((j) => j.state === "waiting").length;
-  box.replaceChildren(
-    el("button", { type: "button", disabled: !fix.length, title: "Fix the flags of every season shown that holds the SeaDex best", onclick: () => runBulk("fix", fix) }, `Fix flags on ${fix.length} shown`),
-    el("button", { type: "button", disabled: !search.length, title: "Put every season shown in line to search, one a minute so the trackers see a trickle. The scout runs the line: the page can be closed.", onclick: () => bulkSearch(search) }, `Search ${search.length} shown`),
-    ...(waiting ? [el("button", { type: "button", title: "Drop the searches still waiting in line", onclick: cancelSearches }, `Cancel ${waiting} waiting`)] : []));
+  box.replaceChildren(...[
+    el("button", { type: "button", hidden: !fix.length, title: "Fix the flags of every season shown that holds the SeaDex best", onclick: () => runBulk("fix", fix) }, `Fix flags on ${fix.length} shown`),
+    el("button", { type: "button", hidden: !search.length, title: "Put every season shown in line to search, one a minute so the trackers see a trickle. The scout runs the line: the page can be closed.", onclick: () => bulkSearch(search) }, `Search ${search.length} shown`),
+    waiting ? el("button", { type: "button", title: "Drop the searches still waiting in line", onclick: cancelSearches }, `Cancel ${waiting} waiting`) : null,
+  ].filter(Boolean));
 }
 
 async function bulkSearch(rows) {
@@ -228,8 +230,9 @@ async function bulkSearch(rows) {
     const r = await postJSON("api/arr/search/bulk", { targets: rows.map((x) => x.t) });
     lib.searches = r.searches || [];
     searchesChanged();
+    toast(`${rows.length} searches put in line, one a minute. Follow them in the Queue tab.`, "good");
   } catch (err) {
-    alert("Could not start the searches: " + err.message);
+    toast("Could not start the searches: " + err.message, "bad");
   }
 }
 
@@ -238,7 +241,16 @@ async function cancelSearches() {
     lib.searches = (await postJSON("api/arr/search/cancel")).searches || [];
     searchesChanged();
   } catch (err) {
-    alert("Could not cancel: " + err.message);
+    toast("Could not cancel: " + err.message, "bad");
+  }
+}
+
+async function clearSearches() {
+  try {
+    lib.searches = (await postJSON("api/arr/search/clear")).searches || [];
+    searchesChanged();
+  } catch (err) {
+    toast("Could not clear: " + err.message, "bad");
   }
 }
 
@@ -314,7 +326,7 @@ function searchesChanged() {
   const running = open.filter((j) => j.state !== "waiting").length;
   const waiting = open.length - running;
   pill.hidden = !open.length;
-  pill.textContent = running ? `Searching${waiting ? ` · ${waiting} in line` : "…"}` : `${waiting} searches in line`;
+  pill.textContent = running ? `Searching${waiting ? ` · ${waiting} in line` : "…"}` : `Searches: ${waiting} in line`;
   renderSearches();
   if (state.tab === "library" && lib.scan) renderBulk(libraryRows());
 }
@@ -324,6 +336,7 @@ function renderSearches() {
   const open = list.filter(searchOpen).length;
   $("searches-count").textContent = list.length;
   $("searches-cancel").hidden = !list.some((j) => j.state === "waiting");
+  $("searches-clear").hidden = !list.some((j) => !searchOpen(j));
   $("searches-status").textContent = open ? `${open} unfinished · updates every 5 s` : list.length ? "All finished" : "";
   const now = Date.now();
   setRows($("searches-rows").tBodies[0], list.map((j) => {
@@ -331,7 +344,7 @@ function renderSearches() {
     return el("tr", {},
       el("td", {}, j.title || `${arrName(j.arr)} #${j.id}`, el("span", { class: "sub", text: arrName(j.arr) + (j.command ? ` · command ${j.command}` : "") })),
       el("td", {}, el("span", { class: "tag " + st.cls, text: st.text })),
-      el("td", { class: "small", text: j.started ? ago(j.started, now) : `asked ${ago(j.added, now)}` }),
+      el("td", { class: "small opt", text: j.started ? ago(j.started, now) : `asked ${ago(j.added, now)}` }),
       el("td", { class: "small" }, j.grabbed && j.grabbed.length ? j.grabbed.map((g) => el("div", { text: g })) : st.detail));
   }), 4, "No search asked for since the scout started.");
 }
@@ -376,6 +389,8 @@ function renderQueue() {
   const items = (lib.queue || []).filter((it) => (!show || (show === "stuck" ? it.stuck : queueState(it).text === show)) &&
     (!q || [it.title, it.series].some((v) => typeof v === "string" && v.toLowerCase().includes(q))));
   const stuck = (lib.queue || []).filter((it) => it.stuck).length;
+  setBadge("queue", stuck, "warn");
+  document.title = stuck ? `(${stuck}) SeaDex Scout` : "SeaDex Scout";
   $("queue-status").textContent = lib.queueError ? "Could not read the queues: " + lib.queueError
     : lib.queue ? `${lib.queue.length} downloads, ${stuck} waiting on you` : "";
   $("queue-count").textContent = items.length;
@@ -420,7 +435,7 @@ async function importQueued(btn, it) {
       btn.title = skipped || "Every file is matched and already scores high enough";
       btn.classList.add("failed");
       btn.disabled = false;
-      alert(`Nothing in "${it.title}" can be imported:\n\n${skipped}\n\nUse ${arrName(it.arr)}'s Manual Import to match the files by hand, or Remove.`);
+      toast(`Nothing in "${it.title}" can be imported:\n${skipped}\nUse ${arrName(it.arr)}'s Manual Import to match the files by hand, or Remove.`, "warn", 12000);
       return;
     }
     if (!confirm(`Import ${p.files} files from "${it.title}" as hardlinks, with indexer flags ${p.indexer_flags}?` + (skipped ? `\n\n${skipped}` : ""))) {
@@ -461,7 +476,7 @@ async function removeQueued(btn, it, confirmed) {
 // seriesButton opens the per-series view for a finding's or scan row's title.
 function seriesButton(arr, id, title) {
   if (!id) return null;
-  return el("button", { type: "button", class: "info-btn", title: `Everything about ${title}`, "aria-label": `Details for ${title}`, onclick: () => openSeries(arr, id, title) }, "ⓘ");
+  return el("button", { type: "button", class: "info-btn", title: `Everything about ${title}`, "aria-label": `Details for ${title}`, onclick: () => openSeries(arr, id, title) }, "i");
 }
 
 function openSeries(arr, id, title) {
@@ -531,6 +546,7 @@ function renderLeftovers() {
     : "Not checked yet.";
   const all = (s && s.torrents) || [];
   const free = all.filter((t) => !t.keep).reduce((n, t) => n + t.size, 0);
+  setBadge("torrents", all.filter((t) => !t.keep).length);
   const show = $("left-filter").value;
   const q = $("left-search").value.trim().toLowerCase();
   const rows = all.filter((t) => (!show || (show === "delete" ? !t.keep : t.keep === show)) && (!q || t.name.toLowerCase().includes(q)));
@@ -582,6 +598,8 @@ function onTabShown(name) {
   $("queue-reload").addEventListener("click", loadQueue);
   $("left-scan").addEventListener("click", () => loadLeftovers(true));
   $("searches-cancel").addEventListener("click", cancelSearches);
+  $("searches-clear").addEventListener("click", clearSearches);
+  for (const id of ["lib-filter", "queue-filter", "left-filter", "events-filter"]) remember(id);
   $("search-pill").addEventListener("click", () => showTab("queue"));
   loadSearches();
   $("series-close").addEventListener("click", () => $("series-dialog").close());
@@ -589,5 +607,8 @@ function onTabShown(name) {
   for (const id of ["left-search", "left-filter"]) $(id).addEventListener("input", renderLeftovers);
   loadLibrary(false); // the Overview's score badges need it too
   onTabShown(state.tab);
-  setInterval(() => { if (state.tab === "queue" && !document.hidden) loadQueue(); }, 60000);
+  // The tab badges need the queue and the leftovers whatever tab is open.
+  if (state.tab !== "queue") loadQueue();
+  if (state.tab !== "torrents") loadLeftovers(false);
+  setInterval(() => { if (!document.hidden) loadQueue(); }, 60000);
 })();

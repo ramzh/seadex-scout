@@ -201,8 +201,18 @@ func (st *Store) Load() error {
 	if loaded.Views == nil {
 		loaded.Views = map[string]int64{}
 	}
+	// Restarts before the dedupe in Observe left repeated "found at start"
+	// events; replay them through the same rule.
+	events := loaded.Events
+	loaded.Events = nil
 	st.mu.Lock()
 	st.s = loaded
+	for _, e := range events {
+		if after, _ := e.Attrs["after_start"].(bool); after && st.stillFound(e) {
+			continue
+		}
+		st.s.Events = append(st.s.Events, e)
+	}
 	st.mu.Unlock()
 	return nil
 }
@@ -277,6 +287,30 @@ var quietMsgs = map[string]bool{
 	"indexer request": true,
 	"report item":     true,
 	"upgrade sizes":   true,
+	// Activity lists these.
+	"upgrade found":    true,
+	"upgrade resolved": true,
+}
+
+// quietLine also leaves out the indexer's per-request lines.
+func quietLine(l Line) bool {
+	return quietMsgs[l.Msg] || (l.Msg == "http" && l.Str("component") == "indexer")
+}
+
+// eventKey names the upgrade an event is about.
+func eventKey(l Line) string {
+	return fmt.Sprint(l.Attrs["arr"], l.Attrs["al_id"], l.Attrs["season"], l.Attrs["episodes"])
+}
+
+// stillFound reports that the newest event for l's upgrade is a found one.
+func (st *Store) stillFound(l Line) bool {
+	key := eventKey(l)
+	for i := len(st.s.Events) - 1; i >= 0; i-- {
+		if e := st.s.Events[i]; eventKey(e) == key {
+			return e.Msg == "upgrade found"
+		}
+	}
+	return false
 }
 
 // Observe records one log line. It is the Handler's only entry point.
@@ -292,7 +326,7 @@ func (st *Store) Observe(l Line) {
 		st.trimPending()
 		return
 	}
-	if !quietMsgs[l.Msg] {
+	if !quietLine(l) {
 		st.logs = pushRing(st.logs, l, maxLogLines)
 	}
 	if l.Level == slog.LevelError.String() {
@@ -319,6 +353,11 @@ func (st *Store) Observe(l Line) {
 	case "upgrade sizes":
 		st.s.Views[l.Str("hidden_tier")] = l.Int("upgrades")
 	case "upgrade found", "upgrade resolved":
+		// After a restart every open upgrade is found again; one the list
+		// already shows as found adds nothing.
+		if after, _ := l.Attrs["after_start"].(bool); after && st.stillFound(l) {
+			break
+		}
 		st.s.Events = pushRing(st.s.Events, l, maxEvents)
 		// After a start every upgrade reads as found; only real arrivals notify.
 		if after, _ := l.Attrs["after_start"].(bool); l.Msg == "upgrade found" && !after && st.events != nil {

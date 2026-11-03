@@ -437,3 +437,81 @@ table.data tr.stuck td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 button.pill { border: 0; cursor: pointer; font-family: inherit; }
 [hidden] { display: none !important; }
 .act-btn.busy { color: var(--accent); border-color: var(--accent); }
+
+/* ---------- UX pass ---------- */
+/* Tab badges: what waits in each tab, so it shows without opening it. */
+.tabs .badge {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.tabs .badge.warn { background: var(--warn-bg); color: var(--warn); }
+.tabs .badge.info { background: var(--info-bg); color: var(--accent); }
+
+/* Long explanations fold away; the first visit opens them once. */
+details.help, details.fold { margin: 4px 0 10px; }
+details.help > summary, details.fold > summary {
+  cursor: pointer;
+  width: fit-content;
+  font-size: 12.5px;
+  color: var(--muted);
+  list-style: none;
+}
+details.help > summary::before, details.fold > summary::before { content: "▸ "; }
+details.help[open] > summary::before, details.fold[open] > summary::before { content: "▾ "; }
+details.help > summary:hover, details.fold > summary:hover { color: var(--accent); }
+details.help > p { margin: 6px 0 0; max-width: 110ch; }
+
+/* The info button draws its own "i", which every font has. */
+.info-btn { font-family: Georgia, "Times New Roman", serif; font-style: italic; font-weight: 700; min-width: 20px; }
+
+/* Toasts replace alert() for results and errors. */
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(440px, calc(100vw - 32px));
+}
+.toast {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: var(--surface);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+  white-space: pre-line;
+  cursor: pointer;
+}
+.toast.good { border-left-color: var(--good); }
+.toast.bad { border-left-color: var(--bad); }
+.toast.warn { border-left-color: var(--warn); }
+
+/* Findings tables: the title and the SeaDex release keep a readable width. */
+table.findings td:nth-child(1) { min-width: 150px; }
+table.findings td:nth-child(5) { min-width: 140px; }
+
+/* Keyboard focus stays visible. */
+button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+kbd {
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--surface-2);
+}
