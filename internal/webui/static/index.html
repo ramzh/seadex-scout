@@ -135,17 +135,26 @@
   <!-- Queue -->
   <section id="tab-queue" class="tab-panel" hidden>
     <div class="card filters">
-      <label class="toggle"><input id="queue-stuck" type="checkbox" checked> Waiting on me only</label>
+      <input id="queue-search" type="search" placeholder="Filter by title" aria-label="Filter by title">
+      <select id="queue-filter" aria-label="Status">
+        <option value="stuck">Waiting on you</option>
+        <option value="">Every download</option>
+        <option value="Waiting to import">Waiting to import</option>
+        <option value="Importing">Importing</option>
+        <option value="Downloading">Downloading</option>
+        <option value="Paused">Paused</option>
+        <option value="Failed">Failed</option>
+      </select>
       <span class="spacer"></span>
       <span id="queue-status" class="muted small"></span>
       <button id="queue-reload" type="button">↻ Reload</button>
     </div>
     <div class="card">
       <div class="card-head"><h2>Sonarr and Radarr queues <span id="queue-count" class="count"></span></h2></div>
-      <p class="muted small"><strong>Import</strong> takes the files Sonarr matched to episodes with no file or a file below the minimum score, as hardlinks, with the grab's indexer flags. It overrides only Sonarr's "episode was unexpected" check, which stops packs that hold more than their name says. <strong>Remove</strong> drops the entry from the queue only: the torrent keeps seeding and nothing is blocklisted.</p>
+      <p class="muted small"><strong>Import</strong> takes the files Sonarr matched to episodes with no file or a file below the minimum score, as hardlinks, with the grab's indexer flags. It overrides only Sonarr's "episode was unexpected" check, which stops packs that hold more than their name says. <strong>Remove</strong> drops the entry from the queue only: the torrent keeps seeding and nothing is blocklisted. A pack whose matched files are all imported already shows <strong>Already imported</strong>: its extra files keep it queued, so remove it (auto mode does this every 30 minutes).</p>
       <div class="table-wrap">
         <table id="queue-rows" class="data">
-          <thead><tr><th>Download</th><th>State</th><th class="num">Size</th><th class="opt">Sonarr says</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Download</th><th>Status</th><th class="num">Size</th><th class="opt">Sonarr says</th><th>Actions</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -155,8 +164,16 @@
   <!-- Torrents -->
   <section id="tab-torrents" class="tab-panel" hidden>
     <div class="card filters">
-      <span id="left-status" class="muted small"></span>
+      <input id="left-search" type="search" placeholder="Filter by name" aria-label="Filter by name">
+      <select id="left-filter" aria-label="Status">
+        <option value="">Every leftover</option>
+        <option value="delete">Can be deleted</option>
+        <option value="private tracker">Kept: private tracker</option>
+        <option value="shares files with another torrent">Kept: shares files</option>
+        <option value="files missing">Kept: files missing</option>
+      </select>
       <span class="spacer"></span>
+      <span id="left-status" class="muted small"></span>
       <button id="left-scan" type="button" title="Compare every finished torrent's files with the library, by inode">↻ Find leftovers</button>
     </div>
     <div class="card">

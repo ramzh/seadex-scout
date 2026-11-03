@@ -643,7 +643,8 @@ func (l *Library) autoFix(ctx context.Context) {
 }
 
 // autoImport imports the stuck Sonarr downloads that were grabbed as a
-// SeaDex best (the grab carries the best flags), with Import's rules.
+// SeaDex best (the grab carries the best flags), with Import's rules, and
+// removes from the queue the stuck ones that hold nothing left to import.
 func (l *Library) autoImport(ctx context.Context) {
 	if l.sonarr == nil {
 		return
@@ -659,6 +660,14 @@ func (l *Library) autoImport(ctx context.Context) {
 			continue
 		}
 		preview, err := l.ImportQueued(ctx, it.ID, true)
+		if err == nil && preview.Done {
+			if err := l.RemoveFromQueue(ctx, "sonarr", it.ID); err != nil {
+				l.log.Warn("could not remove an imported download from the queue", "queue_id", it.ID, "title", it.Title, "error", err)
+			} else {
+				l.log.Info("imported download removed from the queue", "queue_id", it.ID, "title", it.Title, "reasons", preview.Reasons)
+			}
+			continue
+		}
 		if err != nil || preview.Files == 0 || preview.IndexerFlags&best != best {
 			continue
 		}
@@ -952,6 +961,10 @@ type ImportResult struct {
 	IndexerFlags int      `json:"indexer_flags"`
 	Command      int      `json:"command"`
 	Reasons      []string `json:"reasons,omitempty"`
+	// Done means nothing is left to import: every file Sonarr matched is
+	// already at the minimum score. Sonarr keeps such a pack queued only for
+	// its extra files, so removing it from the queue loses nothing.
+	Done bool `json:"done"`
 }
 
 type manualImportRow struct {
@@ -1033,6 +1046,7 @@ func (l *Library) ImportQueued(ctx context.Context, id int, dry bool) (ImportRes
 	}
 	var files []map[string]any
 	reasons := map[string]int{}
+	atMin, blockedFiles := 0, 0
 	for _, r := range rows {
 		blocked := ""
 		for _, rj := range r.Rejections {
@@ -1050,8 +1064,10 @@ func (l *Library) ImportQueued(ctx context.Context, id int, dry bool) (ImportRes
 			reasons["not matched to an episode"]++
 		case allGood:
 			reasons["already at the minimum score"]++
+			atMin++
 		case blocked != "":
 			reasons[blocked]++
+			blockedFiles++
 		default:
 			ids := make([]int, 0, len(r.Episodes))
 			for _, e := range r.Episodes {
@@ -1071,6 +1087,7 @@ func (l *Library) ImportQueued(ctx context.Context, id int, dry bool) (ImportRes
 	}
 	slices.Sort(res.Reasons)
 	res.Files = len(files)
+	res.Done = len(files) == 0 && atMin > 0 && blockedFiles == 0
 	if len(files) == 0 || dry {
 		return res, nil
 	}

@@ -252,7 +252,10 @@ function queueState(it) {
 }
 
 function renderQueue() {
-  const items = (lib.queue || []).filter((it) => !$("queue-stuck").checked || it.stuck);
+  const show = $("queue-filter").value;
+  const q = $("queue-search").value.trim().toLowerCase();
+  const items = (lib.queue || []).filter((it) => (!show || (show === "stuck" ? it.stuck : queueState(it).text === show)) &&
+    (!q || [it.title, it.series].some((v) => typeof v === "string" && v.toLowerCase().includes(q))));
   const stuck = (lib.queue || []).filter((it) => it.stuck).length;
   $("queue-status").textContent = lib.queueError ? "Could not read the queues: " + lib.queueError
     : lib.queue ? `${lib.queue.length} downloads, ${stuck} waiting on you` : "";
@@ -282,10 +285,22 @@ async function importQueued(btn, it) {
   try {
     const p = await postJSON("api/queue/import", { id: it.id, dry: true });
     const skipped = (p.reasons || []).map((x) => "  skip " + x).join("\n");
+    if (!p.files && p.done) {
+      btn.textContent = "Already imported";
+      btn.title = skipped;
+      if (confirm(`Every file Sonarr matched in "${it.title}" is already imported at the minimum score; only extra files keep it queued.\n\nRemove it from the queue? The torrent keeps seeding.\n\n${skipped}`)) {
+        await removeQueued(btn, it, true);
+      } else {
+        btn.disabled = false;
+      }
+      return;
+    }
     if (!p.files) {
       btn.textContent = "Nothing to import";
       btn.title = skipped || "Every file is matched and already scores high enough";
+      btn.classList.add("failed");
       btn.disabled = false;
+      alert(`Nothing in "${it.title}" can be imported:\n\n${skipped}\n\nUse Sonarr's Manual Import to match the files by hand, or Remove.`);
       return;
     }
     if (!confirm(`Import ${p.files} files from "${it.title}" as hardlinks, with indexer flags ${p.indexer_flags}?` + (skipped ? `\n\n${skipped}` : ""))) {
@@ -307,8 +322,8 @@ async function importQueued(btn, it) {
   }
 }
 
-async function removeQueued(btn, it) {
-  if (!confirm(`Remove "${it.title}" from ${arrName(it.arr)}'s queue? The torrent stays in qBittorrent and keeps seeding.`)) return;
+async function removeQueued(btn, it, confirmed) {
+  if (!confirmed && !confirm(`Remove "${it.title}" from ${arrName(it.arr)}'s queue? The torrent stays in qBittorrent and keeps seeding.`)) return;
   btn.disabled = true;
   try {
     await postJSON("api/queue/remove", { arr: it.arr, id: it.id });
@@ -394,10 +409,13 @@ function renderLeftovers() {
     : !s ? "Loading…" : s.running ? "Comparing torrents with the library…"
     : s.finished_at ? `Checked ${s.checked} torrents ${ago(s.finished_at, now)}` + (s.error ? ` · error: ${s.error}` : "")
     : "Not checked yet.";
-  const rows = (s && s.torrents) || [];
-  const free = rows.filter((t) => !t.keep).reduce((n, t) => n + t.size, 0);
+  const all = (s && s.torrents) || [];
+  const free = all.filter((t) => !t.keep).reduce((n, t) => n + t.size, 0);
+  const show = $("left-filter").value;
+  const q = $("left-search").value.trim().toLowerCase();
+  const rows = all.filter((t) => (!show || (show === "delete" ? !t.keep : t.keep === show)) && (!q || t.name.toLowerCase().includes(q)));
   $("left-count").textContent = rows.length;
-  $("left-total").textContent = rows.length ? `${fmtBytes(free)} can be freed` : "";
+  $("left-total").textContent = all.length ? `${fmtBytes(free)} can be freed` : "";
   setRows($("left-rows").tBodies[0], rows.map((t) => {
     const actions = el("td", { class: "actions" });
     if (!t.keep) actions.append(el("button", { type: "button", class: "act-btn bad", title: "Delete the torrent and its data in qBittorrent", onclick: (e) => deleteLeftover(e.currentTarget, t) }, "Delete"));
@@ -444,7 +462,8 @@ function onTabShown(name) {
   $("queue-reload").addEventListener("click", loadQueue);
   $("left-scan").addEventListener("click", () => loadLeftovers(true));
   $("series-close").addEventListener("click", () => $("series-dialog").close());
-  $("queue-stuck").addEventListener("input", renderQueue);
+  for (const id of ["queue-search", "queue-filter"]) $(id).addEventListener("input", renderQueue);
+  for (const id of ["left-search", "left-filter"]) $(id).addEventListener("input", renderLeftovers);
   loadLibrary(false); // the Overview's score badges need it too
   onTabShown(state.tab);
   setInterval(() => { if (state.tab === "queue" && !document.hidden) loadQueue(); }, 60000);

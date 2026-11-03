@@ -158,6 +158,36 @@ func TestImportQueuedTakesOnlyLowEpisodesAndGrabFlags(t *testing.T) {
 	if fake.cmds[0]["importMode"] != "auto" {
 		t.Fatalf("importMode = %v, want auto (hardlink)", fake.cmds[0]["importMode"])
 	}
+	if res.Done {
+		t.Fatal("a pack with files left to import was reported done")
+	}
+}
+
+func TestImportQueuedReportsDoneOnlyWhenEveryMatchedFileIsImported(t *testing.T) {
+	ep := func(id, file int) map[string]any { return map[string]any{"id": id, "episodeFileId": file} }
+	good := map[string]any{"path": "/data/pack/01.mkv", "series": map[string]int{"id": 7}, "episodes": []any{ep(1, 100)}}
+	fake := &fakeSonarr{
+		queue:   []map[string]any{{"id": 5, "seriesId": 7, "downloadId": "ABC", "outputPath": "/data/pack", "sizeLeft": 0}},
+		history: []map[string]any{{"eventType": "grabbed", "data": map[string]string{"indexerFlags": "Scene, Freeleech25"}}},
+		files:   []map[string]any{{"id": 100, "customFormatScore": 5000}, {"id": 101, "customFormatScore": 0}},
+	}
+	lib := newTestLibrary(t, fake)
+	for _, tc := range []struct {
+		name string
+		rows []map[string]any
+		done bool
+	}{
+		{"imported plus extras", []map[string]any{good, {"path": "/data/pack/NCOP.mkv"}}, true},
+		{"nothing matched", []map[string]any{{"path": "/data/pack/NCOP.mkv"}}, false},
+		{"a low file is blocked", []map[string]any{good, {"path": "/data/pack/02.mkv", "series": map[string]int{"id": 7},
+			"episodes": []any{ep(2, 101)}, "rejections": []any{map[string]string{"reason": "Sample"}}}}, false},
+	} {
+		fake.rows = tc.rows
+		res, err := lib.ImportQueued(t.Context(), 5, true)
+		if err != nil || res.Done != tc.done {
+			t.Errorf("%s: done = %v, %v; want %v", tc.name, res.Done, err, tc.done)
+		}
+	}
 }
 
 func TestSearchPicksTheCommand(t *testing.T) {
