@@ -2,6 +2,7 @@ package webui
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -149,10 +152,17 @@ type Library struct {
 	// Auto runs the flag fix and the queue import on their own, with the
 	// same rules as the buttons.
 	Auto bool
+	// Refresh starts the scout's local library refresh, so the findings
+	// catch up with files Sonarr or Radarr imported. Nil leaves them to the
+	// daily full check.
+	Refresh func() error
+
+	path string // the scan and the searches, kept across restarts
 
 	mu       sync.Mutex
 	scan     ScoreScan
 	lastScan time.Time
+	previews map[int]queuePreview // dry imports of stuck downloads, by queue id
 
 	searches   []SearchJob // newest first
 	lastSearch time.Time
@@ -165,8 +175,57 @@ func NewLibrary(sonarr, radarr Arr, minScore int, store *Store, log *slog.Logger
 	if minScore <= 0 {
 		minScore = DefaultMinScore
 	}
-	return &Library{sonarr: newArrAPI("sonarr", sonarr), radarr: newArrAPI("radarr", radarr),
-		store: store, log: log, minScore: minScore, searchWake: make(chan struct{}, 1)}
+	l := &Library{sonarr: newArrAPI("sonarr", sonarr), radarr: newArrAPI("radarr", radarr),
+		store: store, log: log, minScore: minScore, searchWake: make(chan struct{}, 1), previews: map[int]queuePreview{}}
+	if store != nil && store.path != "" {
+		l.path = filepath.Join(filepath.Dir(store.path), libraryStateFile)
+		l.load()
+	}
+	return l
+}
+
+// libraryStateFile holds the newest scan and the searches beside the
+// dashboard's state, so a restart neither forgets the searches in line nor
+// shows an empty Library tab until the next scan.
+const libraryStateFile = "library-state.json"
+
+type libraryState struct {
+	Scan     ScoreScan   `json:"scan"`
+	Searches []SearchJob `json:"searches"`
+}
+
+func (l *Library) load() {
+	raw, err := os.ReadFile(l.path)
+	if err != nil {
+		return // absent on the first start
+	}
+	var st libraryState
+	if err := json.Unmarshal(raw, &st); err != nil {
+		l.log.Warn("library state is not valid JSON; starting empty", "path", l.path, "error", err)
+		return
+	}
+	st.Scan.Running = false
+	l.scan, l.lastScan, l.searches = st.Scan, st.Scan.FinishedAt, st.Searches
+}
+
+// persistLocked writes the scan and the searches, through a temp file and a
+// rename; l.mu must be held.
+// ponytail: writes the whole file on every change (a few KB, every 5 s at
+// most while a search runs); batch the writes if that ever shows.
+func (l *Library) persistLocked() {
+	if l.path == "" {
+		return
+	}
+	raw, err := json.Marshal(libraryState{Scan: l.scan, Searches: l.searches})
+	if err == nil {
+		tmp := l.path + ".tmp"
+		if err = os.WriteFile(tmp, raw, 0o600); err == nil {
+			err = os.Rename(tmp, l.path)
+		}
+	}
+	if err != nil {
+		l.log.Warn("could not save the library state", "path", l.path, "error", err)
+	}
 }
 
 func (l *Library) arr(name string) (*arrAPI, error) {
@@ -327,14 +386,11 @@ func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 	case status != "at_best" && status != "newer_revision":
 		noGroups = fmt.Errorf("the scout does not say you hold the SeaDex best here (status %s), and no file was imported from a SeaDex best torrent", status)
 	default:
-		for _, g := range strings.Split(f.Str("recommended_groups")+","+f.Str("recommended_group"), ",") {
-			if g = normGroup(g); g != "" {
-				groups[g] = true
-				res.Groups = append(res.Groups, g)
-			}
+		groups = bestGroups(f)
+		for g := range groups {
+			res.Groups = append(res.Groups, g)
 		}
 		slices.Sort(res.Groups)
-		res.Groups = slices.Compact(res.Groups)
 	}
 	files, err := l.files(ctx, a, t.ID)
 	if err != nil {
@@ -395,6 +451,27 @@ func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 	res.Fixed = len(updates)
 	l.forget(t)
 	return res, nil
+}
+
+// bestGroups is the finding's SeaDex best groups, normalized.
+func bestGroups(f Line) map[string]bool {
+	groups := map[string]bool{}
+	for _, g := range strings.Split(f.Str("recommended_groups")+","+f.Str("recommended_group"), ",") {
+		if g = normGroup(g); g != "" {
+			groups[g] = true
+		}
+	}
+	return groups
+}
+
+// fixableGroups is the best groups Fix flags trusts for t: those of a
+// finding that says the library holds the best, else none.
+func (l *Library) fixableGroups(t Target) map[string]bool {
+	f, ok := l.store.findingFor(t)
+	if st := f.Str("status"); !ok || (st != "at_best" && st != "newer_revision") {
+		return nil
+	}
+	return bestGroups(f)
 }
 
 // abTorrent finds the AnimeBytes torrent id in the comment qBittorrent keeps
@@ -528,6 +605,9 @@ type SeasonScore struct {
 	// Proven counts the low files imported from a SeaDex best torrent, which
 	// Fix flags can flag whatever their group.
 	Proven int `json:"proven"`
+	// Fixable counts the low files Fix flags would flag: proven ones, and
+	// those of the best group where the scout says the library holds it.
+	Fixable int `json:"fixable"`
 }
 
 // ScoreScan is the newest low-score scan.
@@ -541,6 +621,10 @@ type ScoreScan struct {
 	Files      int           `json:"files"`
 	LowFiles   int           `json:"low_files"`
 	Seasons    []SeasonScore `json:"seasons"`
+	// Clean names the seasons, series and films whose every file reaches the
+	// minimum score, keyed like Target.key: Sonarr or Radarr already scores
+	// them as SeaDex releases.
+	Clean []string `json:"clean,omitempty"`
 }
 
 // Scan returns the newest scan.
@@ -550,6 +634,7 @@ func (l *Library) Scan() ScoreScan {
 	s := l.scan
 	s.MinScore = l.minScore
 	s.Seasons = slices.Clone(s.Seasons)
+	s.Clean = slices.Clone(s.Clean)
 	return s
 }
 
@@ -596,6 +681,7 @@ func (l *Library) Run(ctx context.Context) {
 	}
 	go l.runSearches(ctx)
 	wait := time.Minute
+	importsSince := time.Now().UTC()
 	for {
 		select {
 		case <-ctx.Done():
@@ -603,10 +689,22 @@ func (l *Library) Run(ctx context.Context) {
 		case <-time.After(wait):
 		}
 		wait = autoEvery
+		// Files imported since the last look change what the findings and
+		// the scan say: refresh both now rather than at the daily check.
+		now := time.Now().UTC()
+		imported := l.importsSince(ctx, importsSince)
+		if imported > 0 {
+			importsSince = now
+			l.log.Info("new imports in Sonarr or Radarr; refreshing the findings and the score scan", "files", imported)
+			if l.Refresh != nil {
+				if err := l.Refresh(); err != nil {
+					l.log.Debug("library refresh after imports not started", "error", err)
+				}
+			}
+		}
 		scanned := false
-		if time.Since(l.lastScan) >= scoreScanEvery && l.beginScan() {
+		if (imported > 0 || time.Since(l.lastScan) >= scoreScanEvery) && l.beginScan() {
 			l.runScan(ctx)
-			l.lastScan = time.Now()
 			scanned = true
 		}
 		if l.Auto {
@@ -616,6 +714,25 @@ func (l *Library) Run(ctx context.Context) {
 			l.autoImport(ctx)
 		}
 	}
+}
+
+// importsSince counts the files Sonarr and Radarr imported since a moment;
+// a read that fails counts none.
+func (l *Library) importsSince(ctx context.Context, since time.Time) int {
+	n := 0
+	for _, a := range []*arrAPI{l.sonarr, l.radarr} {
+		if a == nil {
+			continue
+		}
+		var recs []json.RawMessage
+		q := url.Values{"date": {since.Format(time.RFC3339)}, "eventType": {"downloadFolderImported"}}
+		if err := a.call(ctx, http.MethodGet, "/history/since?"+q.Encode(), nil, &recs); err != nil {
+			l.log.Debug("could not read new imports", "arr", a.name, "error", err)
+			continue
+		}
+		n += len(recs)
+	}
+	return n
 }
 
 // autoFix runs Fix flags on every scanned season that can be proven to hold
@@ -651,22 +768,19 @@ func (l *Library) autoFix(ctx context.Context) {
 // SeaDex best (the grab carries the best flags), with Import's rules, and
 // removes from the queue the stuck ones that hold nothing left to import.
 func (l *Library) autoImport(ctx context.Context) {
-	if l.sonarr == nil {
-		return
-	}
 	items, err := l.Queue(ctx)
 	if err != nil {
 		l.log.Debug("automatic import could not read the queue", "error", err)
 		return
 	}
-	best := bestFlags("sonarr")
 	for _, it := range items {
-		if it.Arr != "sonarr" || !it.Stuck || !it.CanImport || ctx.Err() != nil {
+		if !it.Stuck || !it.CanImport || ctx.Err() != nil {
 			continue
 		}
-		preview, err := l.ImportQueued(ctx, it.ID, true)
+		best := bestFlags(it.Arr)
+		preview, err := l.ImportQueued(ctx, it.Arr, it.ID, true)
 		if err == nil && preview.Done {
-			if err := l.RemoveFromQueue(ctx, "sonarr", it.ID); err != nil {
+			if err := l.RemoveFromQueue(ctx, it.Arr, it.ID); err != nil {
 				l.log.Warn("could not remove an imported download from the queue", "queue_id", it.ID, "title", it.Title, "error", err)
 			} else {
 				l.log.Info("imported download removed from the queue", "queue_id", it.ID, "title", it.Title, "reasons", preview.Reasons)
@@ -676,7 +790,7 @@ func (l *Library) autoImport(ctx context.Context) {
 		if err != nil || preview.Files == 0 || preview.IndexerFlags&best != best {
 			continue
 		}
-		res, err := l.ImportQueued(ctx, it.ID, false)
+		res, err := l.ImportQueued(ctx, it.Arr, it.ID, false)
 		if err != nil {
 			l.log.Warn("automatic import failed", "queue_id", it.ID, "title", it.Title, "error", err)
 			continue
@@ -689,6 +803,7 @@ func (l *Library) autoImport(ctx context.Context) {
 func (l *Library) runScan(ctx context.Context) {
 	var seasons []SeasonScore
 	var errs []string
+	var cleanKeys []string
 	scanned, files, low := 0, 0, 0
 	idx, idxErr := l.bestIndex(ctx)
 	if idxErr != nil {
@@ -714,12 +829,19 @@ func (l *Library) runScan(ctx context.Context) {
 			}
 			scanned++
 			by := map[int]*SeasonScore{}
+			clean := map[int]bool{} // seasons seen, false once one file is low
 			var lowFiles []arrFile
 			for _, f := range fs {
 				files++
 				season := f.SeasonNumber
 				if a.name == "radarr" {
 					season = -1
+				}
+				if _, seen := clean[season]; !seen {
+					clean[season] = true
+				}
+				if f.CustomFormatScore < l.minScore {
+					clean[season] = false
 				}
 				s := by[season]
 				if s == nil {
@@ -740,20 +862,40 @@ func (l *Library) runScan(ctx context.Context) {
 					}
 				}
 			}
+			var proven map[int]bool
 			if len(idx) > 0 && len(lowFiles) > 0 {
-				proven, err := l.provenFiles(ctx, a, it.ID, it.TvdbID, lowFiles, idx)
+				proven, err = l.provenFiles(ctx, a, it.ID, it.TvdbID, lowFiles, idx)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s %s history: %v", a.name, it.Title, err))
 				}
-				for _, f := range lowFiles {
-					if proven[f.ID] {
-						season := f.SeasonNumber
-						if a.name == "radarr" {
-							season = -1
-						}
-						by[season].Proven++
-					}
+			}
+			groups := map[int]map[string]bool{}
+			for _, f := range lowFiles {
+				season := f.SeasonNumber
+				if a.name == "radarr" {
+					season = -1
 				}
+				g, ok := groups[season]
+				if !ok {
+					g = l.fixableGroups(Target{Arr: a.name, ID: it.ID, Season: season})
+					groups[season] = g
+				}
+				if proven[f.ID] {
+					by[season].Proven++
+				}
+				if proven[f.ID] || g[normGroup(f.ReleaseGroup)] {
+					by[season].Fixable++
+				}
+			}
+			whole := len(clean) > 0
+			for season, ok := range clean {
+				whole = whole && ok
+				if ok && a.name == "sonarr" {
+					cleanKeys = append(cleanKeys, Target{Arr: a.name, ID: it.ID, Season: season}.key())
+				}
+			}
+			if whole {
+				cleanKeys = append(cleanKeys, Target{Arr: a.name, ID: it.ID, Season: -1}.key())
 			}
 			for _, s := range by {
 				if s.Low > 0 && it.wanted(s.Season) {
@@ -770,7 +912,9 @@ func (l *Library) runScan(ctx context.Context) {
 	})
 	l.mu.Lock()
 	l.scan = ScoreScan{StartedAt: l.scan.StartedAt, FinishedAt: time.Now().UTC(), Error: strings.Join(errs, "; "),
-		Scanned: scanned, Files: files, LowFiles: low, Seasons: seasons}
+		Scanned: scanned, Files: files, LowFiles: low, Seasons: seasons, Clean: cleanKeys}
+	l.lastScan = l.scan.FinishedAt
+	l.persistLocked()
 	l.mu.Unlock()
 	l.log.Info("library score scan complete", "items", scanned, "files", files, "low_files", low,
 		"seasons", len(seasons), "min_score", l.minScore, "errors", len(errs))
@@ -845,7 +989,20 @@ type QueueItem struct {
 	Messages  []string `json:"messages,omitempty"`
 	Stuck     bool     `json:"stuck"`
 	CanImport bool     `json:"can_import"`
+	// Note says why a stuck download cannot be imported from here, or that
+	// it holds nothing left to import.
+	Note string `json:"note,omitempty"`
 }
+
+// queuePreview is a dry import of a stuck download, kept a while so the
+// queue page does not ask Sonarr or Radarr again on every load.
+type queuePreview struct {
+	at  time.Time
+	res ImportResult
+	err error
+}
+
+const previewKeep = 10 * time.Minute
 
 type arrQueueRecord struct {
 	ID                    int     `json:"id"`
@@ -922,7 +1079,14 @@ func (l *Library) Queue(ctx context.Context) ([]QueueItem, error) {
 			waiting := r.TrackedDownloadState == "importPending" || r.TrackedDownloadState == "importBlocked" ||
 				r.TrackedDownloadState == "failedPending"
 			it.Stuck = waiting || (r.TrackedDownloadStatus == "warning" && r.SizeLeft == 0)
-			it.CanImport = a.name == "sonarr" && r.SizeLeft == 0 && r.OutputPath != "" && r.DownloadID != ""
+			it.CanImport = r.SizeLeft == 0 && r.OutputPath != "" && r.DownloadID != ""
+			if it.CanImport && a.name == "radarr" && r.MovieID == 0 && l.store.movieForHash(r.DownloadID) == 0 {
+				it.CanImport = false
+				it.Note = "Radarr cannot tell which film this is and it is no SeaDex best the scout knows: add the film to Radarr, or import it by hand there"
+			}
+			if it.Stuck && it.CanImport {
+				l.notePreview(ctx, a.name, &it)
+			}
 			out = append(out, it)
 		}
 	}
@@ -930,6 +1094,37 @@ func (l *Library) Queue(ctx context.Context) ([]QueueItem, error) {
 		return nil, errors.New(strings.Join(errs, "; "))
 	}
 	return out, nil
+}
+
+// notePreview fills a stuck download's Note from a dry import: nothing the
+// scout can import (only Manual Import in the arr helps), or nothing left.
+func (l *Library) notePreview(ctx context.Context, arr string, it *QueueItem) {
+	l.mu.Lock()
+	p, ok := l.previews[it.ID]
+	l.mu.Unlock()
+	if !ok || time.Since(p.at) > previewKeep {
+		p.res, p.err = l.ImportQueued(ctx, arr, it.ID, true)
+		p.at = time.Now()
+		l.mu.Lock()
+		l.previews[it.ID] = p
+		l.mu.Unlock()
+	}
+	switch {
+	case p.err != nil:
+		it.CanImport, it.Note = false, p.err.Error()
+	case p.res.Done:
+		it.Note = "Already imported: every file is at the minimum score; remove it from the queue"
+	case p.res.Files == 0:
+		it.CanImport = false
+		it.Note = "Nothing the scout can import (" + strings.Join(p.res.Reasons, ", ") + "): use Manual Import in " + arrName(arr)
+	}
+}
+
+func arrName(arr string) string {
+	if arr == "radarr" {
+		return "Radarr"
+	}
+	return "Sonarr"
 }
 
 func (l *Library) queueRecord(ctx context.Context, a *arrAPI, id int) (arrQueueRecord, error) {
@@ -959,7 +1154,7 @@ func (l *Library) RemoveFromQueue(ctx context.Context, arr string, id int) error
 	return a.call(ctx, http.MethodDelete, "/queue/"+strconv.Itoa(id)+q, nil, nil)
 }
 
-// ImportResult is what ImportQueued sent to Sonarr.
+// ImportResult is what ImportQueued sent to Sonarr or Radarr.
 type ImportResult struct {
 	Files        int      `json:"files"`
 	Skipped      int      `json:"skipped"`
@@ -976,9 +1171,13 @@ type manualImportRow struct {
 	Path         string `json:"path"`
 	RelativePath string `json:"relativePath"`
 	FolderName   string `json:"folderName"`
+	Size         int64  `json:"size"`
 	Series       *struct {
 		ID int `json:"id"`
 	} `json:"series"`
+	Movie *struct {
+		ID int `json:"id"`
+	} `json:"movie"`
 	Episodes []struct {
 		ID            int `json:"id"`
 		EpisodeFileID int `json:"episodeFileId"`
@@ -993,22 +1192,27 @@ type manualImportRow struct {
 }
 
 // importableRejection is the one rejection an import overrides: a pack that
-// holds more episodes than Sonarr expected from the grab's name.
+// holds more episodes than Sonarr expected from the grab's name, or, once the
+// scout named the film, Radarr not knowing which film a download is.
 func importableRejection(reason string) bool {
 	r := strings.ToLower(reason)
-	return strings.Contains(r, "unexpected") || strings.Contains(r, "was not found in the grabbed release")
+	return strings.Contains(r, "unexpected") || strings.Contains(r, "was not found in the grabbed release") ||
+		strings.Contains(r, "unknown movie") || strings.Contains(r, "title mismatch")
 }
 
-// ImportQueued imports a finished Sonarr download by hand, as hardlinks, the
-// way Sonarr's Manual Import does. It takes only the files Sonarr matched to
-// an episode, overriding only the "episode was unexpected" check that stops
-// packs larger than their grab's name, and only for episodes with no file or
-// a file below the minimum score. The files get the grab's indexer flags,
-// which Manual Import otherwise drops.
+// ImportQueued imports a finished download by hand, as hardlinks, the way
+// Manual Import does. From a Sonarr pack it takes only the files Sonarr
+// matched to an episode, overriding only the "episode was unexpected" check
+// that stops packs larger than their grab's name, and only for episodes with
+// no file or a file below the minimum score. From Radarr it takes the largest
+// file, for a film with no file at the minimum score; a download Radarr cannot
+// place is placed by the SeaDex best it is (its info hash). The files get the
+// grab's indexer flags, which Manual Import otherwise drops, or the best flags
+// for a download proven a SeaDex best by its hash.
 // With dry set it only reports what it would import.
-func (l *Library) ImportQueued(ctx context.Context, id int, dry bool) (ImportResult, error) {
+func (l *Library) ImportQueued(ctx context.Context, arr string, id int, dry bool) (ImportResult, error) {
 	var res ImportResult
-	a, err := l.arr("sonarr")
+	a, err := l.arr(arr)
 	if err != nil {
 		return res, err
 	}
@@ -1019,9 +1223,23 @@ func (l *Library) ImportQueued(ctx context.Context, id int, dry bool) (ImportRes
 	if rec.OutputPath == "" || rec.DownloadID == "" || rec.SizeLeft > 0 {
 		return res, errors.New("the download has not finished")
 	}
+	owner := rec.SeriesID
+	byHash := false
+	if a.name == "radarr" {
+		owner = rec.MovieID
+		if owner == 0 {
+			owner, byHash = l.store.movieForHash(rec.DownloadID), true
+		}
+		if owner == 0 {
+			return res, errors.New("Radarr cannot tell which film this is and it is no SeaDex best the scout knows")
+		}
+	}
 	flags, err := l.grabFlags(ctx, a, rec.DownloadID)
 	if err != nil {
 		return res, err
+	}
+	if byHash {
+		flags |= bestFlags(a.name)
 	}
 	res.IndexerFlags = flags
 	q := url.Values{"folder": {rec.OutputPath}, "downloadId": {rec.DownloadID}, "filterExistingFiles": {"false"}}
@@ -1030,8 +1248,9 @@ func (l *Library) ImportQueued(ctx context.Context, id int, dry bool) (ImportRes
 		return res, err
 	}
 	good := map[int]bool{} // episode ids whose file already scores high enough
-	if rec.SeriesID > 0 {
-		files, err := l.files(ctx, a, rec.SeriesID)
+	filmGood := false
+	if owner > 0 {
+		files, err := l.files(ctx, a, owner)
 		if err != nil {
 			return res, err
 		}
@@ -1039,6 +1258,7 @@ func (l *Library) ImportQueued(ctx context.Context, id int, dry bool) (ImportRes
 		for _, f := range files {
 			if f.CustomFormatScore >= l.minScore {
 				goodFile[f.ID] = true
+				filmGood = true
 			}
 		}
 		for _, r := range rows {
@@ -1048,6 +1268,12 @@ func (l *Library) ImportQueued(ctx context.Context, id int, dry bool) (ImportRes
 				}
 			}
 		}
+	}
+	if a.name == "radarr" && len(rows) > 1 {
+		// A film is one file: the largest, never its extras or samples.
+		big := slices.MaxFunc(rows, func(x, y manualImportRow) int { return cmp.Compare(x.Size, y.Size) })
+		res.Skipped += len(rows) - 1
+		rows = []manualImportRow{big}
 	}
 	var files []map[string]any
 	reasons := map[string]int{}
@@ -1059,6 +1285,25 @@ func (l *Library) ImportQueued(ctx context.Context, id int, dry bool) (ImportRes
 				blocked = rj.Reason
 				break
 			}
+		}
+		if a.name == "radarr" {
+			switch {
+			case filmGood:
+				reasons["the film already has a file at the minimum score"]++
+				atMin++
+			case blocked != "":
+				reasons[blocked]++
+				blockedFiles++
+			default:
+				files = append(files, map[string]any{
+					"path": r.Path, "folderName": r.FolderName, "movieId": owner,
+					"quality": r.Quality, "languages": r.Languages, "releaseGroup": r.ReleaseGroup,
+					"indexerFlags": flags, "downloadId": rec.DownloadID,
+				})
+				continue
+			}
+			res.Skipped++
+			continue
 		}
 		allGood := len(r.Episodes) > 0
 		for _, e := range r.Episodes {
@@ -1104,6 +1349,9 @@ func (l *Library) ImportQueued(ctx context.Context, id int, dry bool) (ImportRes
 		return res, err
 	}
 	res.Command = cmd.ID
+	l.mu.Lock()
+	delete(l.previews, id)
+	l.mu.Unlock()
 	return res, nil
 }
 
@@ -1133,6 +1381,23 @@ func (l *Library) grabFlags(ctx context.Context, a *arrAPI, downloadID string) (
 		}
 	}
 	return flags, nil
+}
+
+// movieForHash returns the Radarr film whose SeaDex best release has this
+// info hash, by the newest pass's findings, or 0.
+func (st *Store) movieForHash(hash string) int {
+	hash = strings.ToLower(strings.TrimSpace(hash))
+	if hash == "" {
+		return 0
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, f := range st.s.Findings {
+		if f.Str("arr") == "radarr" && strings.EqualFold(f.Str("info_hash"), hash) {
+			return int(f.Int("arr_id"))
+		}
+	}
+	return 0
 }
 
 // findingFor returns the newest pass's finding for the target: the season's

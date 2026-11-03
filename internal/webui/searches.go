@@ -80,6 +80,7 @@ func (l *Library) QueueSearches(targets []SearchJob, now bool) (int, error) {
 	if now && added > 0 {
 		l.lastSearch = time.Time{}
 	}
+	l.persistLocked()
 	l.wakeSearches()
 	return added, nil
 }
@@ -95,6 +96,7 @@ func (l *Library) CancelSearches() int {
 			n++
 		}
 	}
+	l.persistLocked()
 	return n
 }
 
@@ -184,6 +186,7 @@ func (l *Library) saveSearch(j SearchJob) {
 		keep = append(keep, s)
 	}
 	l.searches = keep
+	l.persistLocked()
 }
 
 // followSearch reads the command's status and, once it is done, the grabs it
@@ -205,6 +208,11 @@ func (l *Library) followSearch(ctx context.Context, j SearchJob) SearchJob {
 		return j
 	case err != nil:
 		return j // try again on the next poll
+	case (cmd.Status == "queued" || cmd.Status == "started") && time.Since(j.Started) > searchGiveUp:
+		// A command stuck behind others is given up on; the line moves on.
+		j.State, j.Finished = "failed", time.Now().UTC()
+		j.Message = fmt.Sprintf("still %s after %s", cmd.Status, searchGiveUp)
+		return j
 	}
 	j.Message = cmd.Message
 	switch cmd.Status {
@@ -217,7 +225,7 @@ func (l *Library) followSearch(ctx context.Context, j SearchJob) SearchJob {
 		j.Message = strings.TrimSpace(cmd.Status + ": " + cmd.Message)
 		return j
 	}
-	grabs, err := l.grabsSince(ctx, a, j.ID, j.Started.Add(-searchGrabSkew))
+	grabs, err := l.grabsSince(ctx, a, j.Target, j.Started.Add(-searchGrabSkew))
 	if err != nil {
 		return j // the command is done; read the grabs on the next poll
 	}
@@ -230,13 +238,16 @@ func (l *Library) followSearch(ctx context.Context, j SearchJob) SearchJob {
 	return j
 }
 
-// grabsSince lists the releases the arr grabbed for a series or film since a
-// moment.
-func (l *Library) grabsSince(ctx context.Context, a *arrAPI, id int, since time.Time) ([]string, error) {
+// grabsSince lists the releases the arr grabbed for the target since a
+// moment: for a season, only grabs of that season's episodes, so an RSS grab
+// of another season during the search is not taken for its result.
+func (l *Library) grabsSince(ctx context.Context, a *arrAPI, t Target, since time.Time) ([]string, error) {
+	id := t.ID
 	type rec struct {
 		EventType   string    `json:"eventType"`
 		Date        time.Time `json:"date"`
 		SourceTitle string    `json:"sourceTitle"`
+		EpisodeID   int       `json:"episodeId"`
 	}
 	var recs []rec
 	var err error
@@ -255,8 +266,27 @@ func (l *Library) grabsSince(ctx context.Context, a *arrAPI, id int, since time.
 	if err != nil {
 		return nil, err
 	}
+	var inSeason map[int]bool
+	if a.name == "sonarr" && t.Season >= 0 {
+		var eps []struct {
+			ID           int `json:"id"`
+			SeasonNumber int `json:"seasonNumber"`
+		}
+		if err := a.call(ctx, http.MethodGet, "/episode?seriesId="+strconv.Itoa(id), nil, &eps); err != nil {
+			return nil, err
+		}
+		inSeason = map[int]bool{}
+		for _, e := range eps {
+			if e.SeasonNumber == t.Season {
+				inSeason[e.ID] = true
+			}
+		}
+	}
 	var out []string
 	for _, r := range recs {
+		if inSeason != nil && !inSeason[r.EpisodeID] {
+			continue
+		}
 		if r.EventType == "grabbed" && !r.Date.Before(since) && !slices.Contains(out, r.SourceTitle) {
 			out = append(out, r.SourceTitle)
 		}

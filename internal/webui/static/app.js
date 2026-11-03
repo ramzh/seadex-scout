@@ -317,6 +317,8 @@ function render() {
   renderActivity(snap);
   renderHealth(snap);
   if (state.tab === "reports") renderReportJob(snap.report_job);
+  // The Library tab joins its rows to the findings, which may arrive after it.
+  if (state.tab === "library" && lib.scan) renderLibraryTab();
 }
 
 // ---------- render: overview ----------
@@ -370,9 +372,23 @@ function kindOf(f) {
   // An undecided row whose group is a named SeaDex alt is held at that alt:
   // an optional upgrade, like a better_release held at an alt.
   if (a.status === "unverifiable" && a.current_tier === "alt") return "upgrade";
+  // Sonarr or Radarr already scores every file a SeaDex release (best or
+  // alt): nothing left to check by hand.
+  if (GROUPS.has(a.status) && arrScored(a)) return "atbest";
   if (GROUPS.has(a.status)) return "groups";
   if (a.status === "not_downloaded") return "missing";
   return "other";
+}
+
+// arrScored says the score scan found every file of the finding's season,
+// series or film at the minimum score.
+let scoredSet = { snap: null, keys: new Set() };
+function arrScored(a) {
+  const snap = state.snap;
+  if (!snap || !snap.arr_scored) return false;
+  if (scoredSet.snap !== snap) scoredSet = { snap, keys: new Set(snap.arr_scored) };
+  const t = targetOf(a);
+  return Boolean(t) && scoredSet.keys.has(targetKey(t));
 }
 
 const KIND_ORDER = { upgrade: 0, missing: 1, groups: 2, nobest: 3, atbest: 4, other: 5 };
@@ -382,8 +398,9 @@ function whyOf(a) {
     case "newer_revision": return { text: "Newer version", cls: "info" };
     case "better_release": return a.current_tier === "alt"
       ? { text: "SeaDex alt", cls: "good" } : { text: "Neither best nor alt", cls: "warn" };
-    case "mixed_group_manual": return { text: "Several release groups", cls: "" };
+    case "mixed_group_manual": return arrScored(a) ? { text: `${arrName(a.arr)} scores it SeaDex`, cls: "good" } : { text: "Several release groups", cls: "" };
     case "unverifiable": {
+      if (arrScored(a)) return { text: `${arrName(a.arr)} scores it SeaDex`, cls: "good" };
       if (a.current_tier === "alt") return { text: "SeaDex alt", cls: "good" };
       const yours = (a.current_group || "").trim().toLowerCase();
       if (!yours || yours === "nogrp") return { text: "Your group can't be read", cls: "" };

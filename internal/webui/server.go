@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -12,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -75,6 +77,9 @@ func NewServer(o Options) *http.Server {
 		}
 		if o.Usenet != nil {
 			snap.Usenet = o.Usenet.Status()
+		}
+		if o.Library != nil {
+			snap.ArrScored = o.Library.Scan().Clean
 		}
 		writeJSON(w, snap)
 	})
@@ -277,7 +282,7 @@ func NewServer(o Options) *http.Server {
 
 	return &http.Server{
 		Addr:              o.Addr,
-		Handler:           securityHeaders(mux),
+		Handler:           securityHeaders(gzipAPI(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      2 * time.Minute,
@@ -290,6 +295,36 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Cache-Control", "no-store")
 	enc := json.NewEncoder(w)
 	_ = enc.Encode(v)
+}
+
+// gzipAPI compresses the API's answers for a client that takes gzip: the
+// state the page polls is over a megabyte of JSON that shrinks about tenfold.
+func gzipAPI(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") || !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Add("Vary", "Accept-Encoding")
+		gz := gzip.NewWriter(w)
+		defer gz.Close() //nolint:errcheck // the client sees a cut answer either way
+		next.ServeHTTP(gzipWriter{ResponseWriter: w, gz: gz}, r)
+	})
+}
+
+type gzipWriter struct {
+	http.ResponseWriter
+	gz *gzip.Writer
+}
+
+func (g gzipWriter) Write(b []byte) (int, error) { return g.gz.Write(b) }
+
+func (g gzipWriter) WriteHeader(code int) {
+	// The body is gzip whatever came before, http.Error included.
+	g.Header().Del("Content-Length")
+	g.Header().Set("Content-Encoding", "gzip")
+	g.ResponseWriter.WriteHeader(code)
 }
 
 func securityHeaders(next http.Handler) http.Handler {

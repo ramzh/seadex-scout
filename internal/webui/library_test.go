@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
@@ -46,6 +47,8 @@ func (f *fakeSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 	case r.URL.Path == "/api/v5/queue":
 		_ = enc.Encode(map[string]any{"records": f.queue})
+	case r.URL.Path == "/api/v5/episode":
+		_ = enc.Encode([]map[string]int{{"id": 1, "seasonNumber": 1}, {"id": 2, "seasonNumber": 2}})
 	case r.URL.Path == "/api/v5/history":
 		_ = enc.Encode(map[string]any{"records": f.history})
 	case r.URL.Path == "/api/v5/manualimport":
@@ -137,10 +140,10 @@ func TestImportQueuedTakesOnlyLowEpisodesAndGrabFlags(t *testing.T) {
 		},
 	}
 	lib := newTestLibrary(t, fake)
-	if preview, err := lib.ImportQueued(t.Context(), 5, true); err != nil || preview.Files != 2 || len(fake.cmds) != 0 {
+	if preview, err := lib.ImportQueued(t.Context(), "sonarr", 5, true); err != nil || preview.Files != 2 || len(fake.cmds) != 0 {
 		t.Fatalf("dry run = %+v, %v, commands %v; want 2 files and nothing sent", preview, err, fake.cmds)
 	}
-	res, err := lib.ImportQueued(t.Context(), 5, false)
+	res, err := lib.ImportQueued(t.Context(), "sonarr", 5, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +190,7 @@ func TestImportQueuedReportsDoneOnlyWhenEveryMatchedFileIsImported(t *testing.T)
 			"episodes": []any{ep(2, 101)}, "rejections": []any{map[string]string{"reason": "Sample"}}}}, false},
 	} {
 		fake.rows = tc.rows
-		res, err := lib.ImportQueued(t.Context(), 5, true)
+		res, err := lib.ImportQueued(t.Context(), "sonarr", 5, true)
 		if err != nil || res.Done != tc.done {
 			t.Errorf("%s: done = %v, %v; want %v", tc.name, res.Done, err, tc.done)
 		}
@@ -288,8 +291,9 @@ func TestSearchesRunInLineAndReportTheGrab(t *testing.T) {
 	}
 	fake.status = "completed"
 	fake.history = []map[string]any{
-		{"eventType": "grabbed", "date": time.Now().UTC().Format(time.RFC3339), "sourceTitle": "[NAN0] Show S01"},
-		{"eventType": "grabbed", "date": "2020-01-01T00:00:00Z", "sourceTitle": "old grab"},
+		{"eventType": "grabbed", "date": time.Now().UTC().Format(time.RFC3339), "sourceTitle": "[NAN0] Show S01", "episodeId": 1},
+		{"eventType": "grabbed", "date": time.Now().UTC().Format(time.RFC3339), "sourceTitle": "RSS grab of S02", "episodeId": 2},
+		{"eventType": "grabbed", "date": "2020-01-01T00:00:00Z", "sourceTitle": "old grab", "episodeId": 1},
 	}
 	lib.stepSearches(t.Context())
 	got := lib.Searches()
@@ -301,5 +305,79 @@ func TestSearchesRunInLineAndReportTheGrab(t *testing.T) {
 	}
 	if n := lib.CancelSearches(); n != 1 || lib.Searches()[0].State != "cancelled" {
 		t.Fatalf("cancelled %d, want the waiting one", n)
+	}
+}
+
+func TestRestartKeepsTheScanAndTheSearches(t *testing.T) {
+	dir := t.TempDir()
+	st := NewStore(dir + "/webui-state.json")
+	lib := NewLibrary(Arr{URL: "http://sonarr.invalid", APIKey: "k"}, Arr{}, 0, st, slog.New(slog.DiscardHandler))
+	if _, err := lib.QueueSearches([]SearchJob{{Target: Target{Arr: "sonarr", ID: 7, Season: 1}}}, false); err != nil {
+		t.Fatal(err)
+	}
+	lib.mu.Lock()
+	lib.scan = ScoreScan{Running: true, FinishedAt: time.Now().UTC(), Clean: []string{"sonarr:7:1"}}
+	lib.persistLocked()
+	lib.mu.Unlock()
+	again := NewLibrary(Arr{URL: "http://sonarr.invalid", APIKey: "k"}, Arr{}, 0, st, slog.New(slog.DiscardHandler))
+	if s := again.Searches(); len(s) != 1 || s[0].State != "waiting" {
+		t.Fatalf("searches after restart = %+v, want the one waiting", s)
+	}
+	if sc := again.Scan(); sc.Running || len(sc.Clean) != 1 || again.lastScan.IsZero() {
+		t.Fatalf("scan after restart = %+v, want it finished, with its clean keys", sc)
+	}
+}
+
+func TestGzipAPI(t *testing.T) {
+	h := gzipAPI(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, map[string]int{"a": 1}) }))
+	req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	zr, err := gzip.NewReader(rec.Body)
+	if err != nil || rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("not gzip: %v %v", rec.Header(), err)
+	}
+	if b, _ := io.ReadAll(zr); strings.TrimSpace(string(b)) != `{"a":1}` {
+		t.Fatalf("body %q", b)
+	}
+}
+
+func TestImportQueuedPlacesAnUnknownFilmBySeaDexHash(t *testing.T) {
+	var cmds []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		enc := json.NewEncoder(w)
+		switch r.URL.Path {
+		case "/api/v3/queue":
+			_ = enc.Encode(map[string]any{"records": []map[string]any{{"id": 3, "title": "Film", "outputPath": "/d/f", "downloadId": "ABC"}}})
+		case "/api/v3/history":
+			_ = enc.Encode(map[string]any{"records": []any{}})
+		case "/api/v3/manualimport":
+			_ = enc.Encode([]map[string]any{
+				{"path": "/d/f/film.mkv", "size": 10, "rejections": []map[string]string{{"reason": "Unknown Movie"}}},
+				{"path": "/d/f/sample.mkv", "size": 1},
+			})
+		case "/api/v3/moviefile":
+			_ = enc.Encode([]any{})
+		case "/api/v3/command":
+			var cmd map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&cmd)
+			cmds = append(cmds, cmd)
+			_ = enc.Encode(map[string]int{"id": 9})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	st := NewStore("")
+	st.s.Findings = []Line{{Attrs: map[string]any{"arr": "radarr", "arr_id": float64(5), "info_hash": "abc"}}}
+	lib := NewLibrary(Arr{}, Arr{URL: srv.URL, APIKey: "k"}, 0, st, slog.New(slog.DiscardHandler))
+	res, err := lib.ImportQueued(t.Context(), "radarr", 3, false)
+	if err != nil || res.Files != 1 || len(cmds) != 1 {
+		t.Fatalf("result %+v, %v, %d commands; want the one film imported", res, err, len(cmds))
+	}
+	f := cmds[0]["files"].([]any)[0].(map[string]any)
+	if f["movieId"] != float64(5) || f["path"] != "/d/f/film.mkv" || f["indexerFlags"] != float64(radarrBestFlags) {
+		t.Fatalf("imported %v; want film.mkv as movie 5 with the best flags", f)
 	}
 }

@@ -419,6 +419,9 @@ type Snapshot struct {
 	Usenet    UsenetStatus `json:"usenet"`
 	Refresh   RefreshJob   `json:"refresh"`
 	Version   string       `json:"version,omitempty"`
+	// ArrScored lists the seasons, series and films whose every file Sonarr
+	// or Radarr scores at the minimum (ScoreScan.Clean).
+	ArrScored []string `json:"arr_scored,omitempty"`
 	state
 }
 

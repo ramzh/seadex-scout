@@ -172,6 +172,8 @@ func (w *webUIRuntime) start(ctx context.Context, cfg *config.Config) func() {
 	if library.Auto {
 		log.Info("automatic flag fix and queue import on", "env", envAutoFix)
 	}
+	refresher := webui.NewLibraryRefresher(ctx, refreshAll, w.store)
+	library.Refresh = refresher.Start
 	go library.Run(ctx)
 	var categories []string
 	for _, c := range strings.Split(cmp.Or(os.Getenv(envLeftoverCategories), defaultLeftoverCategories), ",") {
@@ -195,7 +197,7 @@ func (w *webUIRuntime) start(ctx context.Context, cfg *config.Config) func() {
 		Notifier:  notifier,
 		Qbit:      qbit,
 		Usenet:    newUsenet(log),
-		Refresher: webui.NewLibraryRefresher(ctx, refreshAll, w.store),
+		Refresher: refresher,
 		Library:   library,
 		Leftovers: leftovers,
 		Ctx:       ctx,

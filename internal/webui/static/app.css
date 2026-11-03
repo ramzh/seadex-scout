@@ -376,6 +376,9 @@ table.data tr.sub-row:hover, table.data tr.has-subs:hover { background: none; }
 
 @media (max-width: 720px) {
   .topbar, .tabs, main { padding-left: 16px; padding-right: 16px; }
+  .topbar { flex-wrap: wrap; gap: 8px; }
+  .brand h1 { white-space: nowrap; }
+  .topbar-right { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
   .bars .label { max-width: 130px; }
   input[type="search"] { width: 100%; }
   .kpi-value { font-size: 24px; }
@@ -403,6 +406,7 @@ td.actions > * + * { margin-left: 6px; }
   color: var(--warn);
   font-variant-numeric: tabular-nums;
 }
+.sub.note { color: var(--warn); }
 table.data tr.stuck td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .kpi.clickable.good .kpi-value { color: var(--good); }
 
@@ -431,4 +435,5 @@ table.data tr.stuck td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 #series-dialog { width: min(900px, calc(100vw - 32px)); }
 
 button.pill { border: 0; cursor: pointer; font-family: inherit; }
+[hidden] { display: none !important; }
 .act-btn.busy { color: var(--accent); border-color: var(--accent); }

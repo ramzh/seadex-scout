@@ -149,8 +149,10 @@ function libraryRows() {
     const f = idx.get(targetKey(t)) || (s.arr === "sonarr" ? idx.get(`sonarr:${s.id}`) : null);
     const a = f ? f.attrs : null;
     let action = a ? actionFor(a) : "";
-    // Files imported from a SeaDex best torrent can be flagged whatever the finding says.
-    if (s.proven > 0) action = "fix";
+    // Fix flags touches only the files it can prove: proven by import, or of
+    // the best group the finding names. None of those, nothing to fix.
+    if (action === "fix" && !s.fixable) action = "";
+    if (s.fixable > 0) action = "fix";
     if (!a && !action) action = "unmatched";
     return { s, t, a, action };
   });
@@ -173,7 +175,7 @@ function renderLibraryTab() {
   const rows = all.filter((r) => (!show || (show === "none" ? !r.action : r.action === show)) &&
     (!q || [r.s.title, ...(r.s.groups || []), r.a && r.a.recommended_group].some((v) => typeof v === "string" && v.toLowerCase().includes(q))));
 
-  const count = (k) => all.filter((r) => r.action === k).reduce((n, r) => n + r.s.low, 0);
+  const count = (k) => all.filter((r) => r.action === k).reduce((n, r) => n + (k === "fix" ? r.s.fixable : r.s.low), 0);
   $("lib-kpi-low").textContent = scan.finished_at ? (scan.low_files || 0).toLocaleString() : "–";
   $("lib-kpi-low-sub").textContent = `in ${all.length} seasons and movies`;
   $("lib-kpi-fix").textContent = scan.finished_at ? count("fix").toLocaleString() : "–";
@@ -187,14 +189,14 @@ function renderLibraryTab() {
   setRows($("lib-rows").tBodies[0], rows.map((r) => {
     const why = r.a ? whyOf(r.a) : r.s.proven ? { text: "Imported from a SeaDex best", cls: "good" } : { text: "Not matched to SeaDex", cls: "" };
     const actions = el("td", { class: "actions" });
-    if (r.action === "fix") actions.append(actionButton("fix", r.t, "Fix flags", "Flag this season's files from the SeaDex best group as a best grab would" + (r.s.proven ? `; ${r.s.proven} files were imported from a SeaDex best torrent` : "")));
+    if (r.action === "fix") actions.append(actionButton("fix", r.t, `Fix ${r.s.fixable} flags`, "Flag this season's files from the SeaDex best group as a best grab would" + (r.s.proven ? `; ${r.s.proven} files were imported from a SeaDex best torrent` : "")));
     if (r.action === "search") actions.append(actionButton("search", r.t, "Search", `Ask ${arrName(r.t.arr)} to search now`));
     return el("tr", {},
       el("td", {}, r.a ? link(r.a.arr_url, r.s.title) : r.s.title, " ", seriesButton(r.s.arr, r.s.id, r.s.title), el("span", { class: "sub", text: `${arrName(r.s.arr)} · ${r.s.arr === "radarr" ? "Film" : r.s.season === 0 ? "Specials" : "Season " + r.s.season}` })),
       el("td", { class: "num", text: `${r.s.low} / ${r.s.files}` }),
       el("td", { class: "num", text: String(r.s.min_score) }),
       Object.assign(groupList(r.s.groups, ""), { className: "groups opt" }),
-      el("td", { class: "opt", text: r.a ? (r.a.recommended_group || "–") : "–" }),
+      el("td", { class: "opt", text: r.a ? (r.a.recommended_group || (r.a.alt_group ? `${r.a.alt_group} (alt)` : "–")) : "–" }),
       el("td", {}, el("span", { class: "tag " + why.cls, text: why.text })),
       actions);
   }), 7, scan.finished_at ? "Every monitored file reaches the minimum score." : "Waiting for the first scan.");
@@ -217,7 +219,7 @@ function renderBulk(rows) {
   box.replaceChildren(
     el("button", { type: "button", disabled: !fix.length, title: "Fix the flags of every season shown that holds the SeaDex best", onclick: () => runBulk("fix", fix) }, `Fix flags on ${fix.length} shown`),
     el("button", { type: "button", disabled: !search.length, title: "Put every season shown in line to search, one a minute so the trackers see a trickle. The scout runs the line: the page can be closed.", onclick: () => bulkSearch(search) }, `Search ${search.length} shown`),
-    waiting ? el("button", { type: "button", title: "Drop the searches still waiting in line", onclick: cancelSearches }, `Cancel ${waiting} waiting`) : null);
+    ...(waiting ? [el("button", { type: "button", title: "Drop the searches still waiting in line", onclick: cancelSearches }, `Cancel ${waiting} waiting`)] : []));
 }
 
 async function bulkSearch(rows) {
@@ -259,7 +261,7 @@ function searchState(j) {
     case "queued": return { text: "Queued…", cls: "info", detail: `${arrName(j.arr)} has the search queued` };
     case "started": return { text: "Searching…", cls: "info", detail: `${arrName(j.arr)} is searching the indexers` };
     case "grabbed": return { text: "Grabbed ✓", cls: "good", detail: "Grabbed: " + (j.grabbed || []).join(" | ") };
-    case "nothing": return { text: "Nothing grabbed", cls: "warn", detail: (j.message ? j.message + ". " : "") + "No release the profile accepts was found" };
+    case "nothing": return { text: "Nothing grabbed", cls: "warn", detail: (j.message ? j.message.replace(/\.*$/, ". ") : "") + "No release the profile accepts was found" };
     case "failed": return { text: "Failed", cls: "bad", detail: j.message || "The search failed" };
     case "cancelled": return { text: "Cancelled", cls: "", detail: "Dropped from the line" };
   }
@@ -382,13 +384,14 @@ function renderQueue() {
     const pct = it.size > 0 ? Math.round((100 * (it.size - it.size_left)) / it.size) : 0;
     const actions = el("td", { class: "actions" });
     if (it.can_import && it.stuck) {
-      actions.append(el("button", { type: "button", class: "act-btn fix", title: "Import the files Sonarr matched to episodes that have no file or score below the minimum, as hardlinks, with the grab's indexer flags", onclick: (e) => importQueued(e.currentTarget, it) }, "Import"));
+      actions.append(el("button", { type: "button", class: "act-btn fix", title: it.arr === "radarr" ? "Import the film's largest file as a hardlink, for a film with no file at the minimum score; a download Radarr cannot place is placed by the SeaDex best it is" : "Import the files Sonarr matched to episodes that have no file or score below the minimum, as hardlinks, with the grab's indexer flags", onclick: (e) => importQueued(e.currentTarget, it) }, it.note ? "Remove imported" : "Import"));
     }
     if (it.stuck || it.size_left === 0) {
       actions.append(el("button", { type: "button", class: "act-btn", title: "Remove from the queue only: the torrent keeps seeding and nothing is blocklisted", onclick: (e) => removeQueued(e.currentTarget, it) }, "Remove"));
     }
     return el("tr", { class: it.stuck ? "stuck" : null },
-      el("td", {}, it.title, el("span", { class: "sub", text: `${arrName(it.arr)}${it.series ? " · " + it.series : ""}${it.indexer ? " · " + it.indexer : ""}` })),
+      el("td", {}, it.title, el("span", { class: "sub", text: `${arrName(it.arr)}${it.series ? " · " + it.series : ""}${it.indexer ? " · " + it.indexer : ""}` }),
+        it.note ? el("span", { class: "sub note", text: it.note }) : null),
       el("td", {}, el("span", { class: "tag " + st.cls, text: st.text })),
       el("td", { class: "num", text: it.size_left > 0 ? `${pct}% of ${fmtBytes(it.size)}` : fmtBytes(it.size) }),
       el("td", { class: "small opt", text: (it.messages || []).slice(0, 3).join(" · ") || "–" }),
@@ -400,12 +403,12 @@ async function importQueued(btn, it) {
   btn.disabled = true;
   btn.textContent = "Checking…";
   try {
-    const p = await postJSON("api/queue/import", { id: it.id, dry: true });
+    const p = await postJSON("api/queue/import", { arr: it.arr, id: it.id, dry: true });
     const skipped = (p.reasons || []).map((x) => "  skip " + x).join("\n");
     if (!p.files && p.done) {
       btn.textContent = "Already imported";
       btn.title = skipped;
-      if (confirm(`Every file Sonarr matched in "${it.title}" is already imported at the minimum score; only extra files keep it queued.\n\nRemove it from the queue? The torrent keeps seeding.\n\n${skipped}`)) {
+      if (confirm(`Every file ${arrName(it.arr)} matched in "${it.title}" is already imported at the minimum score; only extra files keep it queued.\n\nRemove it from the queue? The torrent keeps seeding.\n\n${skipped}`)) {
         await removeQueued(btn, it, true);
       } else {
         btn.disabled = false;
@@ -417,7 +420,7 @@ async function importQueued(btn, it) {
       btn.title = skipped || "Every file is matched and already scores high enough";
       btn.classList.add("failed");
       btn.disabled = false;
-      alert(`Nothing in "${it.title}" can be imported:\n\n${skipped}\n\nUse Sonarr's Manual Import to match the files by hand, or Remove.`);
+      alert(`Nothing in "${it.title}" can be imported:\n\n${skipped}\n\nUse ${arrName(it.arr)}'s Manual Import to match the files by hand, or Remove.`);
       return;
     }
     if (!confirm(`Import ${p.files} files from "${it.title}" as hardlinks, with indexer flags ${p.indexer_flags}?` + (skipped ? `\n\n${skipped}` : ""))) {
@@ -426,10 +429,10 @@ async function importQueued(btn, it) {
       return;
     }
     btn.textContent = "Importing…";
-    const r = await postJSON("api/queue/import", { id: it.id });
+    const r = await postJSON("api/queue/import", { arr: it.arr, id: it.id });
     btn.textContent = r.files ? `Importing ${r.files} ✓` : "Nothing to import";
     btn.classList.add("done");
-    btn.title = [`${r.files} files sent to Sonarr with indexer flags ${r.indexer_flags}`, ...(r.reasons || []).map((x) => "skipped " + x)].join("\n");
+    btn.title = [`${r.files} files sent to ${arrName(it.arr)} with indexer flags ${r.indexer_flags}`, ...(r.reasons || []).map((x) => "skipped " + x)].join("\n");
     setTimeout(loadQueue, 15000);
   } catch (err) {
     btn.textContent = "Failed – retry";
