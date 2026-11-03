@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"cmp"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -920,7 +921,8 @@ func (a titleAudit) seasonServed(key, title string, c *packCensus) string {
 // the persisted-field cap (an over-limit title is dropped on reload).
 func revisedTitle(title string, payloadRev release.Revision) string {
 	token := payloadRev.Token()
-	if token == "" || release.ParseTitleRevision(title).Version >= payloadRev.Version {
+	if token == "" || release.ParseTitleRevision(title).Version >= payloadRev.Version &&
+		(payloadRev.Marker != release.RevisionVersion || arrTitleVersion(title) >= payloadRev.Version) {
 		return title
 	}
 	at, ok := seasonTokenEnd(title)
@@ -935,6 +937,23 @@ func revisedTitle(title string, payloadRev release.Revision) string {
 		return title
 	}
 	return revised
+}
+
+// arrVersion is how Sonarr and Radarr read a vN revision: right after a digit
+// ("01v2", "S01 v2 ") or in brackets ("[v2]"). A title such as
+// "Show - S01 (S01) V4 (BD)" reads v4 to the scout but v1 to the arrs, which
+// then never take it as an upgrade of a v2 file.
+var arrVersion = regexp.MustCompile(`(?i)\d[-._ ]?v(\d)[-._ ]|\[v(\d)\]`)
+
+// arrTitleVersion is the vN revision the arrs read in title, 1 when none.
+func arrTitleVersion(title string) int {
+	best := 1
+	for _, m := range arrVersion.FindAllStringSubmatch(title, -1) {
+		if v, err := strconv.Atoi(m[1] + m[2]); err == nil && v > best {
+			best = v
+		}
+	}
+	return best
 }
 
 // seasonTokenEnd returns the offset right after a title's LAST season+episode
