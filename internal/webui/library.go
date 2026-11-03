@@ -163,6 +163,7 @@ type Library struct {
 	scan     ScoreScan
 	lastScan time.Time
 	previews map[int]queuePreview // dry imports of stuck downloads, by queue id
+	onDisk   onDiskCache
 
 	searches   []SearchJob // newest first
 	lastSearch time.Time
@@ -625,6 +626,11 @@ type ScoreScan struct {
 	// minimum score, keyed like Target.key: Sonarr or Radarr already scores
 	// them as SeaDex releases.
 	Clean []string `json:"clean,omitempty"`
+	// ProvenBest names the seasons and films the scout lists as upgrades
+	// whose every file was imported from a torrent the curation marks as
+	// the SeaDex best: the release on disk is the best, whatever version
+	// or group Sonarr or Radarr reads from its file names.
+	ProvenBest []string `json:"proven_best,omitempty"`
 }
 
 // Scan returns the newest scan.
@@ -635,6 +641,7 @@ func (l *Library) Scan() ScoreScan {
 	s.MinScore = l.minScore
 	s.Seasons = slices.Clone(s.Seasons)
 	s.Clean = slices.Clone(s.Clean)
+	s.ProvenBest = slices.Clone(s.ProvenBest)
 	return s
 }
 
@@ -803,7 +810,7 @@ func (l *Library) autoImport(ctx context.Context) {
 func (l *Library) runScan(ctx context.Context) {
 	var seasons []SeasonScore
 	var errs []string
-	var cleanKeys []string
+	var cleanKeys, provenKeys []string
 	scanned, files, low := 0, 0, 0
 	idx, idxErr := l.bestIndex(ctx)
 	if idxErr != nil {
@@ -887,6 +894,21 @@ func (l *Library) runScan(ctx context.Context) {
 					by[season].Fixable++
 				}
 			}
+			for season := range l.store.upgradeSeasons(a.name, it.ID) {
+				if len(idx) == 0 {
+					break
+				}
+				var sf []arrFile
+				for _, f := range fs {
+					if a.name == "radarr" || f.SeasonNumber == season {
+						sf = append(sf, f)
+					}
+				}
+				all, err := l.provenFiles(ctx, a, it.ID, it.TvdbID, sf, idx)
+				if err == nil && len(sf) > 0 && len(all) == len(sf) {
+					provenKeys = append(provenKeys, Target{Arr: a.name, ID: it.ID, Season: season}.key())
+				}
+			}
 			whole := len(clean) > 0
 			for season, ok := range clean {
 				whole = whole && ok
@@ -912,7 +934,7 @@ func (l *Library) runScan(ctx context.Context) {
 	})
 	l.mu.Lock()
 	l.scan = ScoreScan{StartedAt: l.scan.StartedAt, FinishedAt: time.Now().UTC(), Error: strings.Join(errs, "; "),
-		Scanned: scanned, Files: files, LowFiles: low, Seasons: seasons, Clean: cleanKeys}
+		Scanned: scanned, Files: files, LowFiles: low, Seasons: seasons, Clean: cleanKeys, ProvenBest: provenKeys}
 	l.lastScan = l.scan.FinishedAt
 	l.persistLocked()
 	l.mu.Unlock()
@@ -1253,7 +1275,7 @@ func (l *Library) ImportQueued(ctx context.Context, arr string, id int, dry bool
 			return res, errors.New("Radarr cannot tell which film this is and it is no SeaDex best the scout knows")
 		}
 	}
-	flags, err := l.grabFlags(ctx, a, rec.DownloadID)
+	flags, grabbed, err := l.grabFlags(ctx, a, rec.DownloadID)
 	if err != nil {
 		return res, err
 	}
@@ -1302,6 +1324,10 @@ func (l *Library) ImportQueued(ctx context.Context, arr string, id int, dry bool
 	var files []map[string]any
 	reasons := map[string]int{}
 	atMin, blockedFiles := 0, 0
+	// Sonarr can match a pack to the wrong season (Higurashi's S2 to S1):
+	// "nothing left" needs an episode the grab was for among those at the
+	// minimum, else the match itself is wrong.
+	atMinGrabbed := len(grabbed) == 0
 	for _, r := range rows {
 		blocked := ""
 		for _, rj := range r.Rejections {
@@ -1339,6 +1365,9 @@ func (l *Library) ImportQueued(ctx context.Context, arr string, id int, dry bool
 		case allGood:
 			reasons["already at the minimum score"]++
 			atMin++
+			for _, e := range r.Episodes {
+				atMinGrabbed = atMinGrabbed || grabbed[e.ID]
+			}
 		case blocked != "":
 			reasons[blocked]++
 			blockedFiles++
@@ -1361,7 +1390,10 @@ func (l *Library) ImportQueued(ctx context.Context, arr string, id int, dry bool
 	}
 	slices.Sort(res.Reasons)
 	res.Files = len(files)
-	res.Done = len(files) == 0 && atMin > 0 && blockedFiles == 0
+	res.Done = len(files) == 0 && atMin > 0 && blockedFiles == 0 && atMinGrabbed
+	if len(files) == 0 && atMin > 0 && !atMinGrabbed {
+		res.Reasons = append(res.Reasons, "Sonarr matched the files to episodes the grab was not for: check the match in Manual Import")
+	}
 	if len(files) == 0 || dry {
 		return res, nil
 	}
@@ -1379,32 +1411,42 @@ func (l *Library) ImportQueued(ctx context.Context, arr string, id int, dry bool
 	return res, nil
 }
 
-// grabFlags reads the indexer flags the download was grabbed with, from the
-// arr's history.
-func (l *Library) grabFlags(ctx context.Context, a *arrAPI, downloadID string) (int, error) {
+// grabFlags reads the indexer flags the download was grabbed with, and the
+// episodes it was grabbed for, from the arr's history.
+func (l *Library) grabFlags(ctx context.Context, a *arrAPI, downloadID string) (int, map[int]bool, error) {
 	var page struct {
 		Records []struct {
 			EventType string            `json:"eventType"`
+			EpisodeID int               `json:"episodeId"`
 			Data      map[string]string `json:"data"`
 		} `json:"records"`
 	}
-	q := url.Values{"downloadId": {downloadID}, "page": {"1"}, "pageSize": {"50"}}
+	q := url.Values{"downloadId": {downloadID}, "page": {"1"}, "pageSize": {"1000"}}
 	if err := a.call(ctx, http.MethodGet, "/history?"+q.Encode(), nil, &page); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	// The grab carries the flags; later events of the same download repeat
 	// them, so any record with flags will do when the grab is past the page.
-	flags := 0
+	flags, grabFlags := 0, -1
+	episodes := map[int]bool{}
 	for _, r := range page.Records {
 		f := parseFlagNames(a.name, r.Data["indexerFlags"])
 		if strings.EqualFold(r.EventType, "grabbed") {
-			return f, nil
+			if grabFlags < 0 {
+				grabFlags = f
+			}
+			if r.EpisodeID > 0 {
+				episodes[r.EpisodeID] = true
+			}
 		}
 		if flags == 0 {
 			flags = f
 		}
 	}
-	return flags, nil
+	if grabFlags >= 0 {
+		flags = grabFlags
+	}
+	return flags, episodes, nil
 }
 
 // seasonBelowBest reports that the scout finds a better SeaDex release for
@@ -1416,6 +1458,86 @@ func (l *Library) seasonBelowBest(arr string, id, season int) bool {
 	f, ok := l.store.findingFor(Target{Arr: arr, ID: id, Season: season})
 	st := f.Str("status")
 	return ok && (st == "better_release" || st == "newer_revision")
+}
+
+// upgradeSeasons lists the seasons (-1 for a film or a whole series) the
+// newest pass finds a better release for.
+func (st *Store) upgradeSeasons(arr string, id int) map[int]bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	out := map[int]bool{}
+	for _, f := range st.s.Findings {
+		if f.Str("arr") != arr || int(f.Int("arr_id")) != id {
+			continue
+		}
+		if s := f.Str("status"); s != "better_release" && s != "newer_revision" {
+			continue
+		}
+		season := -1
+		if arr == "sonarr" && (f.Str("scope") == "season" || f.Str("scope") == "episodes") {
+			season = int(f.Int("season"))
+		}
+		out[season] = true
+	}
+	return out
+}
+
+// abTorrentID finds the AnimeBytes torrent id in a release URL
+// ("torrents.php?id=51559&torrentid=1096667").
+var abTorrentID = regexp.MustCompile(`animebytes\.tv/torrents\.php\?[^ |]*torrentid=(\d+)`)
+
+type onDiskCache struct {
+	at  time.Time
+	out map[string]string
+}
+
+const onDiskKeep = 2 * time.Minute
+
+// OnDisk maps the findings that are not at the best ("al_id:season") to the
+// name of a finished qBittorrent torrent that is their SeaDex best release,
+// by info hash or AnimeBytes torrent id: a best downloaded but never
+// imported. It reads qBittorrent at most every two minutes.
+func (l *Library) OnDisk(ctx context.Context) map[string]string {
+	if l.Qbit == nil {
+		return nil
+	}
+	l.mu.Lock()
+	c := l.onDisk
+	l.mu.Unlock()
+	if time.Since(c.at) < onDiskKeep {
+		return c.out
+	}
+	torrents, err := l.Qbit.Torrents(ctx)
+	if err != nil {
+		return c.out
+	}
+	byHash, byAB := map[string]string{}, map[string]string{}
+	for _, t := range torrents {
+		if t.Progress < 1 {
+			continue
+		}
+		byHash[strings.ToLower(t.Hash)] = t.Name
+		if m := abTorrent.FindStringSubmatch(strings.TrimSpace(t.Comment)); m != nil {
+			byAB[m[1]] = t.Name
+		}
+	}
+	out := map[string]string{}
+	for _, f := range l.store.Snapshot().Findings {
+		if f.Str("status") == "at_best" {
+			continue
+		}
+		name := byHash[strings.ToLower(f.Str("info_hash"))]
+		for _, m := range abTorrentID.FindAllStringSubmatch(f.Str("release_urls")+"|"+f.Str("ab_url"), -1) {
+			name = cmp.Or(name, byAB[m[1]])
+		}
+		if name != "" {
+			out[fmt.Sprintf("%d:%d", f.Int("al_id"), f.Int("season"))] = name
+		}
+	}
+	l.mu.Lock()
+	l.onDisk = onDiskCache{at: time.Now(), out: out}
+	l.mu.Unlock()
+	return out
 }
 
 // movieForHash returns the Radarr film whose SeaDex best release has this

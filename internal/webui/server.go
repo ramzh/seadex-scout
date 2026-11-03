@@ -70,7 +70,7 @@ func NewServer(o Options) *http.Server {
 		w.Header().Set("Cache-Control", "no-cache")
 		files.ServeHTTP(w, r)
 	})
-	app.HandleFunc("GET /api/state", func(w http.ResponseWriter, _ *http.Request) {
+	app.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		snap := o.Store.Snapshot()
 		if o.Qbit != nil {
 			snap.Qbit = o.Qbit.Status()
@@ -79,7 +79,9 @@ func NewServer(o Options) *http.Server {
 			snap.Usenet = o.Usenet.Status()
 		}
 		if o.Library != nil {
-			snap.ArrScored = o.Library.Scan().Clean
+			scan := o.Library.Scan()
+			snap.ArrScored, snap.ProvenBest = scan.Clean, scan.ProvenBest
+			snap.OnDisk = o.Library.OnDisk(r.Context())
 		}
 		writeJSON(w, snap)
 	})

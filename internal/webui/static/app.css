@@ -515,3 +515,5 @@ kbd {
   font-size: 11px;
   background: var(--surface-2);
 }
+
+.tag.on-disk { display: inline-block; margin-top: 4px; }

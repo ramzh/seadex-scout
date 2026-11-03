@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -31,6 +32,10 @@ type LeftoverTorrent struct {
 	AddedOn  int64  `json:"added_on"`
 	Files    int    `json:"files"`
 	Missing  int    `json:"missing"` // files not on disk
+	// Unlinked counts the episode-sized videos of a torrent that is partly
+	// in the library: a pack Sonarr imported only part of. Such a torrent
+	// is kept, never offered for deletion.
+	Unlinked int `json:"unlinked,omitempty"`
 	// Keep says why the page offers no delete: "private tracker", "shares
 	// files with another torrent", "files missing". Empty means it is safe to
 	// delete with its data.
@@ -185,12 +190,19 @@ func (o *Leftovers) find(ctx context.Context, hash string) ([]LeftoverTorrent, i
 			}
 			if n, ok := inodeOf(fi); ok && lib[n] {
 				inLibrary = true
-				break
+			} else if episodeVideo(f) {
+				lt.Unlinked++
 			}
 		}
-		if inLibrary || len(files) == 0 {
+		if len(files) == 0 || (inLibrary && lt.Unlinked == 0) {
 			continue
 		}
+		if inLibrary {
+			lt.Keep = "partly in the library"
+			out = append(out, lt)
+			continue
+		}
+		lt.Unlinked = 0
 		switch {
 		case t.Private || strings.Contains(t.Tracker, "animebytes") || strings.Contains(t.Comment, "animebytes"):
 			lt.Keep = "private tracker"
@@ -207,6 +219,16 @@ func (o *Leftovers) find(ctx context.Context, hash string) ([]LeftoverTorrent, i
 
 // Delete removes a leftover torrent with its data, after checking again that
 // it is still a leftover the page may delete.
+// extraVideo names the videos a pack carries besides its episodes.
+var extraVideo = regexp.MustCompile(`(?i)\b(NC)?(OP|ED)\d*\b|S\d+(OP|ED)|creditless|menu|preview|trailer|\bPV\d*\b|\bCM\d*\b|/extras?/|/bonus/|/OST/`)
+
+// episodeVideo reports that a torrent file looks like an episode: a video of
+// episode size that is no opening, ending, menu or other extra.
+func episodeVideo(f QbitFile) bool {
+	ext := strings.ToLower(filepath.Ext(f.Name))
+	return (ext == ".mkv" || ext == ".mp4" || ext == ".avi" || ext == ".m2ts") && f.Size >= 150<<20 && !extraVideo.MatchString("/"+f.Name)
+}
+
 func (o *Leftovers) Delete(ctx context.Context, hash string) (LeftoverTorrent, error) {
 	if hash == "" {
 		return LeftoverTorrent{}, errors.New("no torrent named")

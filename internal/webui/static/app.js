@@ -397,7 +397,11 @@ const NO_BEST = new Set(["theoretical_best", "incomplete", "no_best"]);
 function kindOf(f) {
   const a = f.attrs;
   if (a.status === "at_best") return "atbest";
+  if ((UPGRADE.has(a.status) || GROUPS.has(a.status)) && provenBest(a)) return "atbest";
   if (NO_BEST.has(a.status)) return a.current_tier === "alt" ? "atbest" : "nobest";
+  // An approximate row compares against files it could not tie to the
+  // entry (D.Gray-man's specials Sonarr does not list): a look, no upgrade.
+  if (UPGRADE.has(a.status) && a.approx === true) return "groups";
   if (UPGRADE.has(a.status)) return "upgrade";
   // An undecided row whose group is a named SeaDex alt is held at that alt:
   // an optional upgrade, like a better_release held at an alt.
@@ -412,21 +416,31 @@ function kindOf(f) {
 
 // arrScored says the score scan found every file of the finding's season,
 // series or film at the minimum score.
-let scoredSet = { snap: null, keys: new Set() };
-function arrScored(a) {
+let scoredSet = { snap: null, keys: new Set(), proven: new Set() };
+function scanKeys() {
   const snap = state.snap;
-  if (!snap || !snap.arr_scored) return false;
-  if (scoredSet.snap !== snap) scoredSet = { snap, keys: new Set(snap.arr_scored) };
+  if (scoredSet.snap !== snap) scoredSet = { snap, keys: new Set((snap && snap.arr_scored) || []), proven: new Set((snap && snap.proven_best) || []) };
+  return scoredSet;
+}
+function arrScored(a) {
   const t = targetOf(a);
-  return Boolean(t) && scoredSet.keys.has(targetKey(t));
+  return Boolean(t) && scanKeys().keys.has(targetKey(t));
+}
+
+// provenBest says the files on disk were imported from the SeaDex best
+// torrent itself, so the row is no upgrade whatever Sonarr reads from them.
+function provenBest(a) {
+  const t = targetOf(a);
+  return Boolean(t) && scanKeys().proven.has(targetKey(t));
 }
 
 const KIND_ORDER = { upgrade: 0, missing: 1, groups: 2, nobest: 3, atbest: 4, other: 5 };
 
 function whyOf(a) {
+  if (UPGRADE.has(a.status) && a.approx === true && !provenBest(a)) return { text: "Approximate: check by hand", cls: "" };
   switch (a.status) {
-    case "newer_revision": return { text: "Newer version", cls: "info" };
-    case "better_release": return a.current_tier === "alt"
+    case "newer_revision": return provenBest(a) ? { text: "Imported from the SeaDex best", cls: "good" } : { text: "Newer version", cls: "info" };
+    case "better_release": return provenBest(a) ? { text: "Imported from the SeaDex best", cls: "good" } : a.current_tier === "alt"
       ? { text: "SeaDex alt", cls: "good" } : { text: "Neither best nor alt", cls: "warn" };
     case "mixed_group_manual": return arrScored(a) ? { text: `${arrName(a.arr)} scores it SeaDex`, cls: "good" } : { text: "Several release groups", cls: "" };
     case "unverifiable": {
@@ -694,6 +708,14 @@ function optionCells(a, o, entry, rung) {
   ];
 }
 
+// onDiskTag marks a row whose SeaDex best is already finished in
+// qBittorrent but not in the library: Manual Import, not a search, fixes it.
+function onDiskTag(a) {
+  const name = state.snap && state.snap.on_disk && state.snap.on_disk[`${a.al_id}:${a.season}`];
+  if (!name || kindOf({ attrs: a }) === "atbest") return null;
+  return el("span", { class: "tag warn on-disk", title: `"${name}" is finished in qBittorrent but not imported: use Manual Import in ${arrName(a.arr)} on its folder`, text: "Downloaded, not imported" });
+}
+
 function findingRow(f, now) {
   const a = f.attrs;
   const why = whyOf(a);
@@ -709,7 +731,7 @@ function findingRow(f, now) {
     el("td", {}, link(a.arr_url, a.title || "?"), " ", typeof seriesButton === "function" ? seriesButton(a.arr, num(a.arr_id), a.title || "?") : null,
       el("span", { class: "sub", text: `${arrName(a.arr)} · ${seasonLabel(a)}` })),
     el("td", { class: "num", text: a.status === "not_downloaded" ? "–" : fmtBytes(a.library_bytes) }),
-    el("td", {}, el("span", { class: "tag " + why.cls, text: why.text })),
+    el("td", {}, el("span", { class: "tag " + why.cls, text: why.text }), onDiskTag(a)),
     a.status === "not_downloaded" ? el("td", { text: "–" }) : groupList(a.current_group, newer ? a.current_revision : ""),
     best,
     a.recommended_group ? sizeCell(a.recommended_bytes, changeOf(a, ""), isApprox(a, "")) : el("td", { class: "num", text: "–" }),

@@ -461,6 +461,12 @@ type Snapshot struct {
 	// ArrScored lists the seasons, series and films whose every file Sonarr
 	// or Radarr scores at the minimum (ScoreScan.Clean).
 	ArrScored []string `json:"arr_scored,omitempty"`
+	// ProvenBest lists the upgrades whose files came from the SeaDex best
+	// torrent itself (ScoreScan.ProvenBest).
+	ProvenBest []string `json:"proven_best,omitempty"`
+	// OnDisk maps "al_id:season" of a finding not at the best to the
+	// finished qBittorrent torrent that is its best (Library.OnDisk).
+	OnDisk map[string]string `json:"on_disk,omitempty"`
 	state
 }
 

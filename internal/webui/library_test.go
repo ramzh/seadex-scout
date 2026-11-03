@@ -416,3 +416,35 @@ func TestABestGrabReplacesFilesScoredBestThatAreNot(t *testing.T) {
 		t.Fatalf("preview %+v, %v; want the best grab to replace the alt scored 5000", res, err)
 	}
 }
+
+func TestAWrongMatchIsNotAlreadyImported(t *testing.T) {
+	// Sonarr matched an S2 pack to S1 episodes that already score the
+	// minimum; the grab was for other episodes, so nothing is "done".
+	fake := &fakeSonarr{
+		queue:   []map[string]any{{"id": 5, "seriesId": 7, "outputPath": "/data/pack", "downloadId": "H", "sizeleft": 0}},
+		history: []map[string]any{{"eventType": "grabbed", "episodeId": 50, "data": map[string]string{"indexerFlags": "Scene, Freeleech25"}}},
+		files:   []map[string]any{{"id": 100, "seasonNumber": 1, "customFormatScore": 5000}},
+		rows: []map[string]any{{"path": "/data/pack/01.mkv", "series": map[string]int{"id": 7},
+			"episodes": []any{map[string]int{"id": 1, "episodeFileId": 100, "seasonNumber": 1}}}},
+	}
+	lib := newTestLibrary(t, fake)
+	res, err := lib.ImportQueued(t.Context(), "sonarr", 5, true)
+	if err != nil || res.Done {
+		t.Fatalf("preview %+v, %v; a match outside the grab must not read as already imported", res, err)
+	}
+}
+
+func TestEpisodeVideoLeavesOutExtras(t *testing.T) {
+	big := int64(500 << 20)
+	for name, want := range map[string]bool{
+		"Show S02/S02E04-The Island.mkv": true,
+		"Show S02/S02OP-Baddest.mkv":     false,
+		"Show/Extras/NCED1.mkv":          false,
+		"Show/Menu 01.m2ts":              false,
+		"Show/notes.txt":                 false,
+	} {
+		if got := episodeVideo(QbitFile{Name: name, Size: big}); got != want {
+			t.Errorf("episodeVideo(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
