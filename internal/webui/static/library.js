@@ -552,7 +552,7 @@ function renderLeftovers() {
   const q = $("left-search").value.trim().toLowerCase();
   const rows = all.filter((t) => (!show || (show === "delete" ? !t.keep : t.keep === show)) && (!q || t.name.toLowerCase().includes(q)));
   $("left-count").textContent = rows.length;
-  $("left-total").textContent = all.length ? `${fmtBytes(free)} can be freed` + (partial ? ` · ${partial} packs only partly imported` : "") : "";
+  $("left-total").textContent = all.length ? `${fmtBytes(free)} can be freed` + (partial ? ` · ${partial} packs partly in the library` : "") : "";
   setRows($("left-rows").tBodies[0], rows.map((t) => {
     const actions = el("td", { class: "actions" });
     if (!t.keep) actions.append(el("button", { type: "button", class: "act-btn bad", title: "Delete the torrent and its data in qBittorrent", onclick: (e) => deleteLeftover(e.currentTarget, t) }, "Delete"));
@@ -561,7 +561,7 @@ function renderLeftovers() {
       el("td", { class: "num", text: fmtBytes(t.size) }),
       el("td", { class: "opt small", text: t.added_on ? new Date(t.added_on * 1000).toLocaleDateString() : "–" }),
       el("td", {}, t.keep === "partly in the library"
-        ? el("span", { class: "tag info", title: "Some of this pack's episodes were never imported: use Manual Import in Sonarr on its folder", text: `${t.unlinked} episodes not imported` })
+        ? el("span", { class: "tag", title: "Part of this pack is in the library. The rest was replaced by an upgrade, is unmonitored, or was never imported; an Overview row marked \"Downloaded, not imported\" names the last kind.", text: `Partly in the library (${t.unlinked} videos not)` })
         : el("span", { class: "tag " + (t.keep ? "" : "warn"), text: t.keep ? "Kept: " + t.keep : "Not in the library" })),
       actions);
   }), 5, s && s.finished_at ? "Every finished torrent has a file in the library." : "Press Find leftovers.");
