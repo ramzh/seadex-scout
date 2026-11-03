@@ -891,7 +891,7 @@ func (a titleAudit) served(key, title string) string {
 		// for it (applyTitles writes the served value back).
 		return title
 	}
-	return revisedTitle(a.seasonServed(key, title, &c), c.revision)
+	return arrReadableRevision(revisedTitle(a.seasonServed(key, title, &c), c.revision))
 }
 
 // seasonServed is served's season-pack cross-check over one key's census.
@@ -954,6 +954,23 @@ func arrTitleVersion(title string) int {
 		}
 	}
 	return best
+}
+
+// looseVersion is a standalone vN word, however it is set off: " V4 ",
+// "(v2)", "_v3.".
+var looseVersion = regexp.MustCompile(`(?i)(?:^|[\s\[(._-])v(\d)(?:$|[\s\])._-])`)
+
+// arrReadableRevision adds a [vN] token when the title names a vN revision
+// in a way the arrs cannot read (see arrVersion).
+func arrReadableRevision(title string) string {
+	v := 0
+	for _, m := range looseVersion.FindAllStringSubmatch(title, -1) {
+		v = max(v, int(m[1][0]-'0'))
+	}
+	if v <= arrTitleVersion(title) {
+		return title
+	}
+	return revisedTitle(title, release.Revision{Version: v, Marker: release.RevisionVersion})
 }
 
 // seasonTokenEnd returns the offset right after a title's LAST season+episode

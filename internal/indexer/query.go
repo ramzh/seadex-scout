@@ -523,7 +523,7 @@ func markAndDedupe(raw []item, set *curation, scope string, class requester) (ou
 		// reaches a curation older than the 14-day journal, which is exactly what a
 		// Wanted -> Cutoff Unmet search walks.
 		it.TvdbID = verdict.tvdbID
-		it.Title = withRange(it.Title, verdict.rangeLabel)
+		it.Title = arrReadableRevision(withRange(it.Title, verdict.rangeLabel))
 		id := it.guid()
 		if _, dup := seen[id]; dup {
 			continue

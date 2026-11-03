@@ -167,3 +167,16 @@ func TestApplyTitlesRevisesHarvestedTitleIdempotently(t *testing.T) {
 		t.Errorf("applyTitles without census evidence = %q, want the harvested title unchanged", carried[0].Title)
 	}
 }
+
+func TestArrReadableRevision(t *testing.T) {
+	for _, tc := range []struct{ title, want string }{
+		{"[SubsMix] Bocchi the Rock!  - S01 (S01) V4 (BD 1080p HEVC Opus 2.0)", "[SubsMix] Bocchi the Rock!  - S01 [v4] (S01) V4 (BD 1080p HEVC Opus 2.0)"},
+		{"[Grp] Show - 01v2 [1080p]", "[Grp] Show - 01v2 [1080p]"},
+		{"[Grp] Show S01 [v3] [1080p]", "[Grp] Show S01 [v3] [1080p]"},
+		{"[Grp] Show S01 [1080p]", "[Grp] Show S01 [1080p]"},
+	} {
+		if got := arrReadableRevision(tc.title); got != tc.want {
+			t.Errorf("arrReadableRevision(%q) = %q, want %q", tc.title, got, tc.want)
+		}
+	}
+}
