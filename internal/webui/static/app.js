@@ -136,6 +136,17 @@ function groupWithRevision(group, rev) {
   return rev ? `${group} ${rev}` : group;
 }
 
+// groupList shows at most three groups, the rest as "+N more" with the full
+// list on hover. Files with no group make Sonarr read words of the episode
+// titles as groups, which would otherwise stretch the column.
+function groupList(groups, rev) {
+  const list = (Array.isArray(groups) ? groups : String(groups || "").split(",")).map((g) => g.trim()).filter(Boolean);
+  if (!list.length) return el("td", { text: "–" });
+  const shown = list.slice(0, 3).join(", ") + (rev ? ` ${rev}` : "");
+  return el("td", { title: list.length > 3 ? list.join(", ") : null },
+    shown, list.length > 3 ? el("span", { class: "sub", text: `+${list.length - 3} more` }) : null);
+}
+
 // ---------- theme and tabs ----------
 
 function initTheme() {
@@ -649,7 +660,7 @@ function findingRow(f, now) {
       el("span", { class: "sub", text: `${arrName(a.arr)} · ${seasonLabel(a)}` })),
     el("td", { class: "num", text: a.status === "not_downloaded" ? "–" : fmtBytes(a.library_bytes) }),
     el("td", {}, el("span", { class: "tag " + why.cls, text: why.text })),
-    el("td", { text: a.status === "not_downloaded" ? "–" : groupWithRevision(a.current_group, newer ? a.current_revision : "") }),
+    a.status === "not_downloaded" ? el("td", { text: "–" }) : groupList(a.current_group, newer ? a.current_revision : ""),
     best,
     a.recommended_group ? sizeCell(a.recommended_bytes, changeOf(a, ""), isApprox(a, "")) : el("td", { class: "num", text: "–" }),
     linkCell(a, bestLinks, a.nyaa_url),
@@ -933,7 +944,7 @@ function renderActivity(snap) {
       el("td", { title: fmtTime(e.time), text: ago(e.time, now) }),
       el("td", {}, el("span", { class: "tag " + (found ? (a.after_start ? "" : "warn") : "good"), text: label })),
       el("td", {}, link(a.arr_url, a.title || "?"), el("span", { class: "sub", text: `${arrName(a.arr)} · ${seasonLabel(a)}` })),
-      el("td", { text: a.current_group || "–" }),
+      groupList(a.current_group, ""),
       el("td", { text: a.recommended_group || "–" }));
   }), 5, "No upgrade has come or gone yet.");
 }
@@ -1216,7 +1227,7 @@ function renderReport() {
       el("td", { text: arrName(r.arr) }),
       el("td", { text: r.special ? "Special" : r.arr === "radarr" ? "Film" : r.season !== undefined ? `S${r.season}` : "–" }),
       el("td", {}, el("span", { class: "tag " + cls, text: label })),
-      el("td", { text: (r.current_groups || []).join(", ") || "–" }),
+      groupList(r.current_groups, ""),
       el("td", {}, el("div", { class: "links" }, rels)));
   }), 6, "No rows match.");
   $("report-more").textContent = `Generated ${fmtTime(rep.generated_at)} · ${rows.length} of ${(rep.rows || []).length} rows${rows.length > LIMIT ? `, first ${LIMIT} shown; narrow the filter to see the rest` : ""}`;

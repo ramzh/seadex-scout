@@ -251,6 +251,8 @@ input[type="search"] { width: 240px; max-width: 100%; }
 
 .table-wrap { overflow-x: auto; }
 table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* Long unbroken text (file names, comma lists) wraps instead of widening its column. */
+table.data td { overflow-wrap: anywhere; }
 table.data th, table.data td {
   text-align: left;
   padding: 7px 10px;
