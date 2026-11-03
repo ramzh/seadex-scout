@@ -7,6 +7,7 @@ import (
 
 	"github.com/cplieger/seadex-scout/internal/classify"
 	"github.com/cplieger/seadex-scout/internal/payload"
+	"github.com/cplieger/seadex-scout/internal/release"
 	"github.com/cplieger/seadex-scout/internal/seadex"
 	"github.com/cplieger/seadex-scout/internal/tagfilter"
 )
@@ -231,6 +232,9 @@ func ownershipOf(entries []seadex.Entry, infoFor EntryInfoFunc) map[string][]own
 			}
 			if r.NonFilm {
 				r.Range = rangeLabel(t, &info)
+			}
+			if rev := classify.PayloadRevision(t.Files); rev.Marker == release.RevisionVersion {
+				r.Rev = rev.Version
 			}
 			r.SonarrTitle, r.TwinFirst, r.TwinLast = twinFor(t, &info)
 			if r.SonarrTitle != "" {

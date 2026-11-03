@@ -254,6 +254,11 @@ func packEpisodeRange(t *seadex.Torrent, meta *EntryInfo, label string) string {
 	if !ok {
 		first, last, ok = bareNumberSpan(t.Files)
 	}
+	if ok && last > len(run) && last-first+1 == len(run) {
+		// Numbered by the series, not the entry: Dr. STONE S4 part 3 is
+		// "25v2" to "37v2", the entry's own 13 episodes.
+		first, last = 1, len(run)
+	}
 	if !ok || first < 1 || last > len(run) || first > last {
 		return ""
 	}

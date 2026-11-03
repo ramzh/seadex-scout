@@ -141,6 +141,9 @@ type ownedRelease struct {
 	// rangeLabel), "" otherwise. A search result's bare season token is
 	// swapped for it (withRange). Re-derived every pass.
 	Range string `json:"range,omitempty"`
+	// Rev is the payload's newest vN (classify.PayloadRevision), 0 when it
+	// names none. Re-derived every pass.
+	Rev int `json:"rev,omitempty"`
 }
 
 // dropUnservableTwin clears the catalogue fields of a persisted record that
@@ -234,6 +237,7 @@ func foldOwnerIntoSignal(acc curatedSignal, r *ownedRelease) curatedSignal {
 	acc.vote.add(r.TvdbID)
 	acc.twin.add(r.SonarrTitle)
 	acc.rng.add(r.Range)
+	acc.rev = max(acc.rev, r.Rev)
 	return acc
 }
 

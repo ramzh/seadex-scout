@@ -2022,3 +2022,14 @@ func TestDisabledTrackerFeedIsNotGatedBySnapshotState(t *testing.T) {
 		t.Error("configured tracker RSS fault = nil while nothing has loaded, want the snapshot-unavailable fault")
 	}
 }
+
+func TestMarkAndDedupeAddsThePayloadRevision(t *testing.T) {
+	sig := curatedSignal{isBest: true, rev: 2}
+	sig.rng.add("S04E25-E37")
+	set := &curation{byKey: map[string]curatedSignal{"nyaa:1": sig}}
+	raw := []item{{Title: "[sam] Dr. STONE S04 [Web][MKV][1080p]", InfoURL: "https://nyaa.si/view/1", GUID: "g"}}
+	out, _ := markAndDedupe(raw, set, upstreamNyaa, requesterAny)
+	if len(out) != 1 || out[0].Title != "[sam] Dr. STONE S04E25-E37 [v2] [Web][MKV][1080p]" {
+		t.Fatalf("got %+v, want the range and [v2]", out)
+	}
+}

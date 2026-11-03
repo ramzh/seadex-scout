@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/cplieger/keyenc"
+
+	"github.com/cplieger/seadex-scout/internal/release"
 )
 
 const (
@@ -56,6 +58,7 @@ type curatedSignal struct {
 	twin    twinVote
 	rng     twinVote // the Range label, folded like the twin title
 	vote    tvdbVote
+	rev     int // the newest payload version any holder lists
 	isBest  bool
 	nonFilm bool
 }
@@ -76,6 +79,7 @@ type curationMatch struct {
 	twin    twinVote
 	rng     twinVote
 	vote    tvdbVote
+	rev     int
 	isBest  bool
 	nonFilm bool
 	matched bool
@@ -96,6 +100,7 @@ func (m *curationMatch) accept(sig curatedSignal, ok bool) bool {
 	m.vote.merge(sig.vote)
 	m.twin.merge(sig.twin)
 	m.rng.merge(sig.rng)
+	m.rev = max(m.rev, sig.rev)
 	return true
 }
 
@@ -108,6 +113,7 @@ func (m *curationMatch) accept(sig curatedSignal, ok bool) bool {
 type curationVerdict struct {
 	sonarrTitle string
 	rangeLabel  string
+	rev         int
 	tvdbID      int
 	isBest      bool
 	nonFilm     bool
@@ -153,7 +159,7 @@ func (c *curation) lookup(scope, hash, infoURL, guid string) curationVerdict {
 	return curationVerdict{
 		isBest: match.isBest, matched: match.matched, nonFilm: match.nonFilm,
 		tvdbID: match.vote.resolve(), sonarrTitle: match.twin.resolve(),
-		rangeLabel: match.rng.resolve(),
+		rangeLabel: match.rng.resolve(), rev: match.rev,
 	}
 }
 
@@ -524,6 +530,11 @@ func markAndDedupe(raw []item, set *curation, scope string, class requester) (ou
 		// Wanted -> Cutoff Unmet search walks.
 		it.TvdbID = verdict.tvdbID
 		it.Title = arrReadableRevision(withRange(it.Title, verdict.rangeLabel))
+		// A tracker title rarely names the payload's vN; without it Sonarr
+		// reads v1 and a reissue is no upgrade (Dr. STONE S4 25v2-37v2).
+		if verdict.rev > 1 {
+			it.Title = revisedTitle(it.Title, release.Revision{Version: verdict.rev, Marker: release.RevisionVersion})
+		}
 		id := it.guid()
 		if _, dup := seen[id]; dup {
 			continue
