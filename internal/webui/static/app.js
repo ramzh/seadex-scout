@@ -141,9 +141,9 @@ function groupWithRevision(group, rev) {
 // titles as groups, which would otherwise stretch the column.
 function groupList(groups, rev) {
   const list = (Array.isArray(groups) ? groups : String(groups || "").split(",")).map((g) => g.trim()).filter(Boolean);
-  if (!list.length) return el("td", { text: "–" });
+  if (!list.length) return el("td", { class: "groups", text: "–" });
   const shown = list.slice(0, 3).join(", ") + (rev ? ` ${rev}` : "");
-  return el("td", { title: list.length > 3 ? list.join(", ") : null },
+  return el("td", { class: "groups", title: list.length > 3 ? list.join(", ") : null },
     shown, list.length > 3 ? el("span", { class: "sub", text: `+${list.length - 3} more` }) : null);
 }
 

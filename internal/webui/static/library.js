@@ -188,7 +188,7 @@ function renderLibraryTab() {
       el("td", {}, r.a ? link(r.a.arr_url, r.s.title) : r.s.title, " ", seriesButton(r.s.arr, r.s.id, r.s.title), el("span", { class: "sub", text: `${arrName(r.s.arr)} · ${r.s.arr === "radarr" ? "Film" : r.s.season === 0 ? "Specials" : "Season " + r.s.season}` })),
       el("td", { class: "num", text: `${r.s.low} / ${r.s.files}` }),
       el("td", { class: "num", text: String(r.s.min_score) }),
-      Object.assign(groupList(r.s.groups, ""), { className: "opt" }),
+      Object.assign(groupList(r.s.groups, ""), { className: "groups opt" }),
       el("td", { class: "opt", text: r.a ? (r.a.recommended_group || "–") : "–" }),
       el("td", {}, el("span", { class: "tag " + why.cls, text: why.text })),
       actions);
