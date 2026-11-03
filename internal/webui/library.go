@@ -1147,27 +1147,29 @@ func (l *Library) RemoveFromQueue(ctx context.Context, arr string, id int) error
 	if err != nil {
 		return err
 	}
+	// A download Sonarr or Radarr could not match to a series or film cannot
+	// be dropped: the removal fails (NullReference) or the entry comes back
+	// on the next queue refresh, the torrent still being in their category.
+	// Moving it out of that category drops it for good, files untouched.
+	if l.Qbit != nil {
+		rec, err := l.queueRecord(ctx, a, id)
+		if err != nil {
+			return err
+		}
+		if rec.SeriesID == 0 && rec.MovieID == 0 && rec.DownloadID != "" {
+			twin, err := l.Qbit.Park(ctx, rec.DownloadID)
+			if err != nil {
+				return fmt.Errorf("moving the unmatched torrent out of the queue's category: %w", err)
+			}
+			l.log.Info("unmatched download moved out of the queue by category; the torrent keeps seeding", "arr", arr, "queue_id", id, "category", twin)
+			return nil
+		}
+	}
 	q := "?removeFromClient=false&blocklist=false"
 	if a.version(ctx) == "v5" {
 		q = "?removalMethod=ignore&blocklistMethod=doNotBlocklist"
 	}
-	err = a.call(ctx, http.MethodDelete, "/queue/"+strconv.Itoa(id)+q, nil, nil)
-	if err == nil || l.Qbit == nil || !strings.Contains(err.Error(), " answered 500") {
-		return err
-	}
-	// Sonarr and Radarr fail (NullReference) to drop a download they could
-	// not match to a series or film. Moving the torrent out of their
-	// category drops it from the queue the same way, files untouched.
-	rec, rerr := l.queueRecord(ctx, a, id)
-	if rerr != nil || rec.SeriesID != 0 || rec.MovieID != 0 || rec.DownloadID == "" {
-		return err
-	}
-	twin, perr := l.Qbit.Park(ctx, rec.DownloadID)
-	if perr != nil {
-		return fmt.Errorf("%w; moving the torrent out of the queue's category also failed: %v", err, perr)
-	}
-	l.log.Info("unmatched download moved out of the queue by category; the torrent keeps seeding", "arr", arr, "queue_id", id, "category", twin)
-	return nil
+	return a.call(ctx, http.MethodDelete, "/queue/"+strconv.Itoa(id)+q, nil, nil)
 }
 
 // ImportResult is what ImportQueued sent to Sonarr or Radarr.
