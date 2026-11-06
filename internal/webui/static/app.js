@@ -515,6 +515,7 @@ function renderOverview(snap) {
 
 const LIBRARY_BARS = [
   ["have_best", "At SeaDex best", "--bar-best"],
+  ["have_top", "Top listed, no best", "--bar-best"],
   ["have_alt", "At a SeaDex alt", "--bar-alt"],
   ["have_older_revision", "Older version of best", "--bar-older"],
   ["have_unlisted", "Neither best nor alt", "--bar-unlisted"],
@@ -1251,6 +1252,7 @@ async function runReport() {
 
 const VERDICTS = {
   have_best: ["At SeaDex best", "good"],
+  have_top: ["Top listed, no best", "good"],
   have_alt: ["At a SeaDex alt", "good"],
   have_older_revision: ["Older version", "warn"],
   have_unlisted: ["Neither best nor alt", "warn"],

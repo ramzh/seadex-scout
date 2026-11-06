@@ -27,6 +27,9 @@ func TestVerdictFor(t *testing.T) {
 		{name: "no file", decision: align.Decision{Standing: align.StandingNoFile}, want: VerdictNoFile},
 		{name: "best", decision: align.Decision{Standing: align.StandingBest}, want: VerdictBest},
 		{name: "alt", decision: align.Decision{Standing: align.StandingAlt}, want: verdictAlt},
+		// A listed group with no best on the entry is the top of what SeaDex
+		// lists, not an alt of some other best (365 Days to the Wedding).
+		{name: "top listed, no best", decision: align.Decision{Standing: align.StandingAlt, NoBest: true}, want: verdictTop},
 		{name: "unlisted", decision: align.Decision{Standing: align.StandingUnlisted}, want: VerdictUnlisted},
 		{name: "older revision", decision: align.Decision{Standing: align.StandingBestSuperseded}, want: VerdictOlderRevision},
 		// The three origins of an unverified standing the report keeps as

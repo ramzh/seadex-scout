@@ -48,6 +48,7 @@ var verdictDesc = map[Verdict]string{
 	verdictWithheld:      "Not compared, because seadex-scout cannot trust where this entry sits in your series. The Notes column says why.",
 	VerdictNoFile:        "No file sits where this entry maps. The mapped season, movie, special episodes or specials bucket is empty, or a whole-series comparison found no real season with files. Either the files are missing, or Sonarr files that season elsewhere, such as under TVDB's specials.",
 	VerdictBest:          "You already have SeaDex's best release.",
+	verdictTop:           "You have a release SeaDex lists, and it marks no release best (a theoretical best only, or incomplete): nothing better is listed.",
 	VerdictNotOnSeaDex:   "In your library and recognized as anime (in the anime ID map), but no SeaDex entry the app can compare covers this item's files, so there is no recommendation to compare against.",
 }
 
@@ -55,6 +56,7 @@ var verdictDesc = map[Verdict]string{
 // key alone misleads a reader; the key stays as the machine name.
 var verdictLabel = map[Verdict]string{
 	VerdictNoFile:       "season not found",
+	verdictTop:          "top listed, no best",
 	verdictUnattributed: "episode not known",
 }
 
@@ -502,6 +504,7 @@ func (r *Report) summaryAttrs() []any {
 		"rows", len(r.Rows),
 		"have_best", r.Totals[string(VerdictBest)],
 		"have_alt", r.Totals[string(verdictAlt)],
+		"have_top", r.Totals[string(verdictTop)],
 		"have_older_revision", r.Totals[string(VerdictOlderRevision)],
 		"have_unlisted", r.Totals[string(VerdictUnlisted)],
 		"no_file", r.Totals[string(VerdictNoFile)],

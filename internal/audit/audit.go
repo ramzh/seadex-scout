@@ -30,6 +30,12 @@ const (
 	VerdictBest Verdict = "have_best"
 	// verdictAlt means the on-disk release matches a listed non-best (alt) release.
 	verdictAlt Verdict = "have_alt"
+	// verdictTop means the on-disk release matches a listed release while the
+	// entry offers no best at all (a theoretical best only, incomplete, or every
+	// best filtered out): nothing better is listed, so it counts as best. It is
+	// the alt standing split by d.NoBest, so have_alt keeps meaning "SeaDex
+	// marks a different release best".
+	verdictTop Verdict = "have_top"
 	// VerdictOlderRevision means the on-disk release is a SeaDex best group, but
 	// only at an older revision than SeaDex lists for it (v1 against v2, an
 	// original against a REPACK): the same group's newer release is listed.
@@ -60,7 +66,7 @@ const (
 
 // verdictOrder is the report's most-actionable-first ordering. not_on_seadex is
 // last: it is informational (no SeaDex recommendation exists to act on).
-var verdictOrder = []Verdict{VerdictUnlisted, verdictAlt, VerdictOlderRevision, VerdictUnverified, verdictUnattributed, verdictWithheld, VerdictNoFile, VerdictBest, VerdictNotOnSeaDex}
+var verdictOrder = []Verdict{VerdictUnlisted, verdictAlt, VerdictOlderRevision, VerdictUnverified, verdictUnattributed, verdictWithheld, VerdictNoFile, VerdictBest, verdictTop, VerdictNotOnSeaDex}
 
 // Qualifier annotates a row's verdict with the daemon's finding vocabulary for
 // the same (item, entry). It annotates; it never forks the verdict enum.
@@ -176,7 +182,8 @@ type itemCounts struct {
 	Anime int `json:"anime"`
 	// WithEntry is the items at least one SeaDex entry matched.
 	WithEntry int `json:"with_entry"`
-	// AllBest is the items with an entry whose every COMPARED row is have_best. A
+	// AllBest is the items with an entry whose every COMPARED row is have_best or
+	// have_top (nothing better listed). A
 	// row nothing was compared on (no_file, unattributed, withheld) neither earns
 	// nor blocks it, so an item made only of such rows is not counted.
 	AllBest int `json:"all_best"`
@@ -275,7 +282,7 @@ type itemStanding struct {
 
 func (s itemStanding) with(v Verdict) itemStanding {
 	switch v {
-	case VerdictBest:
+	case VerdictBest, verdictTop:
 		s.best = true
 	case verdictAlt:
 		s.alt = true
@@ -436,6 +443,9 @@ func verdictFor(d *align.Decision, groupsUnknown bool) Verdict {
 	case align.StandingBestSuperseded:
 		return VerdictOlderRevision
 	case align.StandingAlt:
+		if d.NoBest {
+			return verdictTop
+		}
 		return verdictAlt
 	case align.StandingUnlisted:
 		return VerdictUnlisted
