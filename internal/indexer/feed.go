@@ -68,6 +68,11 @@ type EntryInfo struct {
 	// does not place the entry one episode at a time on one season.
 	EpisodeRun       []int
 	EpisodeRunSeason int
+	// MisfiledTitles are the series' Sonarr scene titles mapped to a season
+	// other than Season: a tracker alias under one of them would be filed in that
+	// other season, so a search result under it is not served (misfiledTitle).
+	// Set only when SeasonKnown.
+	MisfiledTitles []string
 }
 
 // MediaKind is what the producer's typing says an entry is. KindUnknown means

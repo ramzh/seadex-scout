@@ -23,6 +23,12 @@ const (
 	ArrRadarr = "radarr"
 )
 
+// SceneTitle is one Sonarr alternate title its scene mapping pins to a season.
+type SceneTitle struct {
+	Title  string `json:"title"`
+	Season int    `json:"season"`
+}
+
 // Item is one library entry (series or movie) in a snapshot. Fields are ordered
 // for govet fieldalignment.
 type Item struct {
@@ -65,6 +71,12 @@ type Item struct {
 	// built outside the walker (tests, future construction paths).
 	ArrURL    string   `json:"arr_url,omitempty"`
 	AltTitles []string `json:"alt_titles,omitempty"`
+	// SceneTitles are the alternate titles Sonarr's scene mapping ties to ONE
+	// season: Sonarr files any release under such a title in that season,
+	// whatever season token the release carries (Maou Gakuin no Futekigousha's
+	// romaji title is mapped to season 2, so its S1 pack under that title is
+	// read as S2). Nil when Sonarr names none or could not be read.
+	SceneTitles []SceneTitle `json:"scene_titles,omitempty"`
 	// AniListIDs are the AniList entries Sonarr links the series to: empty
 	// when it links none, nil on Sonarr 4, which cannot say.
 	AniListIDs []int           `json:"anilist_ids,omitempty"`

@@ -87,6 +87,7 @@ type Walker struct {
 	radarrURL   string
 	includeTags []string
 	excludeTags []string
+	sceneTitles SceneTitleSource
 }
 
 // Config configures a Walker. Sonarr/Radarr may be nil to disable that side.
@@ -100,6 +101,9 @@ type Config struct {
 	RadarrURL   string
 	IncludeTags []string
 	ExcludeTags []string
+	// SceneTitles, when set, stamps each Sonarr item's scene-mapped titles. A
+	// failed read is logged and leaves them nil: the walk does not depend on it.
+	SceneTitles SceneTitleSource
 }
 
 // NewWalker builds a Walker from cfg.
@@ -116,6 +120,7 @@ func NewWalker(cfg *Config) *Walker {
 		radarrURL:   cfg.RadarrURL,
 		includeTags: cfg.IncludeTags,
 		excludeTags: cfg.ExcludeTags,
+		sceneTitles: cfg.SceneTitles,
 	}
 }
 
@@ -360,6 +365,7 @@ func (w *Walker) walkSonarr(ctx context.Context, pass SonarrPass, series []sonar
 			items = append(items, *item)
 		}
 	}
+	w.stampSceneTitles(ctx, items)
 	if failed > 0 {
 		// The attr keys ("skipped", "kept") and the "snapshot is partial"
 		// message substring are pinned by the walker tests and Loki queries:

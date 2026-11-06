@@ -33,6 +33,8 @@ const (
 	seadexTimeout  = 90 * time.Second  // large paged responses
 	mappingTimeout = 180 * time.Second // multi-MB animap file
 	anilistTimeout = 30 * time.Second  // small GraphQL replies
+	// sceneTitlesTimeout bounds Sonarr's full series list (scene titles).
+	sceneTitlesTimeout = 60 * time.Second
 	// prowlarrTimeout is a transport BACKSTOP on the shared Prowlarr client,
 	// not the per-attempt budget: internal/indexer derives each Torznab
 	// attempt's own deadline and sizes its retry tree and HTTP write deadline
@@ -112,6 +114,7 @@ func buildCore(ctx context.Context, cfg *config.Config, readOnlyState bool) (sco
 			RadarrURL:   cfg.RadarrWebBase(),
 			IncludeTags: cfg.IncludeTags,
 			ExcludeTags: cfg.ExcludeTags,
+			SceneTitles: sceneTitles(sc, cfg),
 		}),
 		mapping: mapping.NewLoader(mappingHTTP, mapread.Source{Repo: mapping.DefaultRepo},
 			mapping.WithOverridesPath(config.DefaultMappingOverrides),
@@ -378,6 +381,15 @@ func sonarrClient(s *sonarr.Client) arrwalk.SonarrClient {
 		return nil
 	}
 	return arrwalk.FromSonarr(s)
+}
+
+// sceneTitles reads Sonarr's scene-mapped titles over the configured URL and
+// key, nil when Sonarr is disabled.
+func sceneTitles(s *sonarr.Client, cfg *config.Config) arrwalk.SceneTitleSource {
+	if s == nil {
+		return nil
+	}
+	return arrwalk.SonarrSceneTitles(httpx.NewClient(sceneTitlesTimeout), cfg.SonarrURL, cfg.SonarrAPIKey)
 }
 
 // radarrClient returns r as a arrwalk.RadarrClient, or a nil interface when

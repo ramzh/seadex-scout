@@ -55,12 +55,13 @@ type curation struct {
 // owner supplied one" and then reads as abstention at the cross-signal fold,
 // where an agreeing sibling signal would override the contradiction.
 type curatedSignal struct {
-	twin    twinVote
-	rng     twinVote // the Range label, folded like the twin title
-	vote    tvdbVote
-	rev     int // the newest payload version any holder lists
-	isBest  bool
-	nonFilm bool
+	twin     twinVote
+	rng      twinVote // the Range label, folded like the twin title
+	vote     tvdbVote
+	rev      int // the newest payload version any holder lists
+	misfiled misfiledVote
+	isBest   bool
+	nonFilm  bool
 }
 
 // pairKey joins a validated info hash and a tracker key into the byPair relation
@@ -76,13 +77,14 @@ func pairKey(hash, key string) string { return keyenc.Join(hash, key) }
 // agrees with every previously accepted one, and folds that signal's tvdb and
 // twin votes into the item's. Bookkeeping only; lookup owns policy.
 type curationMatch struct {
-	twin    twinVote
-	rng     twinVote
-	vote    tvdbVote
-	rev     int
-	isBest  bool
-	nonFilm bool
-	matched bool
+	twin     twinVote
+	rng      twinVote
+	vote     tvdbVote
+	misfiled misfiledVote
+	rev      int
+	isBest   bool
+	nonFilm  bool
+	matched  bool
 }
 
 // accept records one identity signal's curation result, reporting whether the
@@ -100,6 +102,7 @@ func (m *curationMatch) accept(sig curatedSignal, ok bool) bool {
 	m.vote.merge(sig.vote)
 	m.twin.merge(sig.twin)
 	m.rng.merge(sig.rng)
+	m.misfiled.add(sig.misfiled.titles)
 	m.rev = max(m.rev, sig.rev)
 	return true
 }
@@ -113,6 +116,7 @@ func (m *curationMatch) accept(sig curatedSignal, ok bool) bool {
 type curationVerdict struct {
 	sonarrTitle string
 	rangeLabel  string
+	misfiled    string
 	rev         int
 	tvdbID      int
 	isBest      bool
@@ -159,7 +163,7 @@ func (c *curation) lookup(scope, hash, infoURL, guid string) curationVerdict {
 	return curationVerdict{
 		isBest: match.isBest, matched: match.matched, nonFilm: match.nonFilm,
 		tvdbID: match.vote.resolve(), sonarrTitle: match.twin.resolve(),
-		rangeLabel: match.rng.resolve(), rev: match.rev,
+		rangeLabel: match.rng.resolve(), rev: match.rev, misfiled: match.misfiled.titles,
 	}
 }
 
@@ -519,6 +523,10 @@ func markAndDedupe(raw []item, set *curation, scope string, class requester) (ou
 			if verdict.conflict {
 				conflicts++
 			}
+			continue
+		}
+		if misfiledTitle(it.Title, verdict.misfiled) {
+			// Sonarr's scene mapping would file this alias in another season.
 			continue
 		}
 		it.DownloadVolumeFactor = dvfAlt

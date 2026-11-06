@@ -144,6 +144,11 @@ type ownedRelease struct {
 	// Rev is the payload's newest vN (classify.PayloadRevision), 0 when it
 	// names none. Re-derived every pass.
 	Rev int `json:"rev,omitempty"`
+	// Misfiled is the comma-joined cleaned Sonarr scene titles this owner's
+	// season is NOT (EntryInfo.MisfiledTitles through cleanTitles; a cleaned
+	// title is alphanumeric, so the join is unambiguous and the record stays
+	// comparable). Re-derived every pass.
+	Misfiled string `json:"misfiled,omitempty"`
 }
 
 // dropUnservableTwin clears the catalogue fields of a persisted record that
@@ -238,6 +243,7 @@ func foldOwnerIntoSignal(acc curatedSignal, r *ownedRelease) curatedSignal {
 	acc.twin.add(r.SonarrTitle)
 	acc.rng.add(r.Range)
 	acc.rev = max(acc.rev, r.Rev)
+	acc.misfiled.add(r.Misfiled)
 	return acc
 }
 

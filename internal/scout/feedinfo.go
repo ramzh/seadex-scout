@@ -93,7 +93,21 @@ func applyRecordFacts(idx *mapping.Index, rec *mapping.Record, li *match.LibInde
 		}
 		applyEpisodeFacts(idx, rec, film, li, info)
 	}
+	if it != nil && info.SeasonKnown && info.Season > 0 {
+		info.MisfiledTitles = misfiledTitles(it.SceneTitles, info.Season)
+	}
 	return it
+}
+
+// misfiledTitles are the scene titles Sonarr pins to a season other than season.
+func misfiledTitles(scene []library.SceneTitle, season int) []string {
+	var out []string
+	for _, s := range scene {
+		if s.Season != season {
+			out = append(out, s.Title)
+		}
+	}
+	return out
 }
 
 // recordKind is the typing rec carries: its type, else the series arm a
