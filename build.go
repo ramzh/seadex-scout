@@ -389,7 +389,10 @@ func sceneTitles(s *sonarr.Client, cfg *config.Config) arrwalk.SceneTitleSource 
 	if s == nil {
 		return nil
 	}
-	return arrwalk.SonarrSceneTitles(httpx.NewClient(sceneTitlesTimeout), cfg.SonarrURL, cfg.SonarrAPIKey)
+	c := httpx.NewClient(sceneTitlesTimeout)
+	// The request carries the API key header: never follow it off-origin.
+	c.CheckRedirect = httpx.RedirectPolicyFunc(httpx.WithSameOrigin(true))
+	return arrwalk.SonarrSceneTitles(c, cfg.SonarrURL, cfg.SonarrAPIKey)
 }
 
 // radarrClient returns r as a arrwalk.RadarrClient, or a nil interface when

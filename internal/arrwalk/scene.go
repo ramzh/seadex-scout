@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cplieger/httpx/v5"
 	"github.com/cplieger/seadex-scout/internal/library"
 )
 
@@ -24,7 +25,8 @@ func (w *Walker) stampSceneTitles(ctx context.Context, items []library.Item) {
 	}
 	byID, err := w.sceneTitles(ctx)
 	if err != nil {
-		w.log.Warn("sonarr scene titles not read; search results keep every alias", "error", err)
+		// A *url.Error carries the configured URL, which may embed credentials.
+		w.log.Warn("sonarr scene titles not read; search results keep every alias", "error", httpx.LogSafeError(err))
 		return
 	}
 	for i := range items {
