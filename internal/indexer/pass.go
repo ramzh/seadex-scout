@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/cplieger/seadex-scout/internal/classify"
@@ -221,13 +222,18 @@ func ownershipOf(entries []seadex.Entry, infoFor EntryInfoFunc) map[string][]own
 		id := ownerKey(entries[i].AniListID)
 		info := infoFor(entries[i].AniListID)
 		torrents := entries[i].Torrents
+		// An entry that names no best (a theoretical best only, Durarara!!x2
+		// Ten) has its alts as the best there is: they are served, and prove
+		// an import, as best, the way the library's flag fix treats them.
+		// When SeaDex names a best, the alts go back to being alts.
+		noBest := !slices.ContainsFunc(torrents, func(t seadex.Torrent) bool { return t.IsBest })
 		for j := range torrents {
 			t := &torrents[j]
 			r := ownedRelease{
 				Key:     trackerKey(t.Tracker, t.URL),
 				Hash:    validInfoHash(t.InfoHash),
 				TvdbID:  info.TvdbID,
-				IsBest:  t.IsBest,
+				IsBest:  t.IsBest || noBest,
 				NonFilm: info.Kind != KindMovie,
 			}
 			if r.NonFilm {

@@ -46,16 +46,24 @@ func arrIndexerFlags(it *servarrItem) []string {
 }
 
 // markerIndexer serves one curated Nyaa release, best or alt, on both render
-// paths: the synthesized RSS feed and a proxied Prowlarr search.
+// paths: the synthesized RSS feed and a proxied Prowlarr search. An alt's entry
+// also names a best on another tracker, or its alt would be served as best
+// (an entry with no best has its alts as the best there is).
 func markerIndexer(t *testing.T, isBest bool) *Indexer {
 	t.Helper()
-	entries := []seadex.Entry{{
-		AniListID: 123,
-		Torrents: []seadex.Torrent{{
-			Tracker: "Nyaa", URL: "https://nyaa.si/view/1234567", InfoHash: "ABCDEF1234567890abcdef1234567890abcdef12", IsBest: isBest,
-			Files: []seadex.File{{Length: 100, Name: "Some Anime - S01E01 (1080p) [PMR].mkv"}},
-		}},
+	torrents := []seadex.Torrent{{
+		Tracker: "Nyaa", URL: "https://nyaa.si/view/1234567", InfoHash: "ABCDEF1234567890abcdef1234567890abcdef12", IsBest: isBest,
+		Files: []seadex.File{{Length: 100, Name: "Some Anime - S01E01 (1080p) [PMR].mkv"}},
 	}}
+	if !isBest {
+		torrents = append(torrents, seadex.Torrent{Tracker: "Other", URL: "https://example.org/t/1", IsBest: true})
+	}
+	return markerIndexerTorrents(t, torrents)
+}
+
+func markerIndexerTorrents(t *testing.T, torrents []seadex.Torrent) *Indexer {
+	t.Helper()
+	entries := []seadex.Entry{{AniListID: 123, Torrents: torrents}}
 	path := filepath.Join(t.TempDir(), "feed.json")
 	seedEmptyFeed(t, path)
 	info := func(int) EntryInfo { return EntryInfo{Title: "Some Anime"} }
@@ -87,6 +95,12 @@ func TestServedItemsCarryTheMarkerPair(t *testing.T) {
 		{desc: "alt on RSS", build: func(t *testing.T) *Indexer { return markerIndexer(t, false) }, want: []string{"Freeleech75", "Scene"}},
 		{desc: "best on a proxied search", build: func(t *testing.T) *Indexer { return markerIndexer(t, true) }, query: search, want: []string{"Freeleech25", "Scene"}},
 		{desc: "alt on a proxied search", build: func(t *testing.T) *Indexer { return markerIndexer(t, false) }, query: search, want: []string{"Freeleech75", "Scene"}},
+		{desc: "alt of an entry with no best, as best", build: func(t *testing.T) *Indexer {
+			return markerIndexerTorrents(t, []seadex.Torrent{{
+				Tracker: "Nyaa", URL: "https://nyaa.si/view/1234567", InfoHash: "ABCDEF1234567890abcdef1234567890abcdef12",
+				Files: []seadex.File{{Length: 100, Name: "Some Anime - S01E01 (1080p) [PMR].mkv"}},
+			}})
+		}, query: search, want: []string{"Freeleech25", "Scene"}},
 		{desc: "unmarked RSS item", build: func(t *testing.T) *Indexer {
 			ix := freshNyaaIndexer(t, &Config{}, nil)
 			seedJournal(t, ix, upstreamNyaa, realItem("42", catAnime))
