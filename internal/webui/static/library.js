@@ -306,6 +306,7 @@ function searchState(j) {
     case "queued": return { text: "Queued…", cls: "info", detail: `${arrName(j.arr)} has the search queued` };
     case "started": return { text: "Searching…", cls: "info", detail: `${arrName(j.arr)} is searching the indexers` };
     case "grabbed": return { text: "Grabbed ✓", cls: "good", detail: "Grabbed: " + (j.grabbed || []).join(" | ") };
+    case "imported": return { text: "Imported ✓", cls: "good", detail: j.message || "Imported from a torrent already seeding" };
     case "nothing": return { text: "Nothing grabbed", cls: "warn", detail: j.message || "No release the profile accepts was found" };
     case "failed": return { text: "Failed", cls: "bad", detail: j.message || "The search failed" };
     case "cancelled": return { text: "Cancelled", cls: "", detail: "Dropped from the line" };
@@ -329,7 +330,7 @@ function paintSearchButton(btn, j) {
   if (!st) { btn.textContent = btn._label; btn.title = btn._title; return; }
   btn.textContent = st.text;
   btn.title = st.detail + (searchOpen(j) ? "" : "\nClick to search again");
-  if (j.state === "grabbed") btn.classList.add("done");
+  if (j.state === "grabbed" || j.state === "imported") btn.classList.add("done");
   else if (j.state === "failed") btn.classList.add("failed");
   else if (searchOpen(j)) btn.classList.add("busy");
 }

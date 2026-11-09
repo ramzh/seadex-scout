@@ -25,8 +25,9 @@ const (
 )
 
 // SearchJob is one search. State is "waiting" (in line), "queued" or
-// "started" (the arr's command), then "grabbed", "nothing" (the command
-// finished without a grab), "failed" or "cancelled".
+// "started" (the arr's command), then "grabbed", "imported" (from a best
+// torrent already seeding), "nothing" (the command finished without a grab),
+// "failed" or "cancelled".
 type SearchJob struct {
 	Target
 	Title    string    `json:"title,omitempty"`
@@ -239,8 +240,17 @@ func (l *Library) followSearch(ctx context.Context, j SearchJob) SearchJob {
 	}
 	j.Grabbed, j.Finished = grabs, time.Now().UTC()
 	j.State = "nothing"
+	var seeded SeedingImport
+	if len(grabs) == 0 && j.Arr == "sonarr" && j.Season >= 0 && l.Qbit != nil {
+		// A best already seeding cannot be grabbed again (qBittorrent 409):
+		// import from it instead.
+		seeded, _ = l.ImportSeeding(ctx, j.Target)
+	}
 	if len(grabs) > 0 {
 		j.State = "grabbed"
+	} else if seeded.Files > 0 {
+		j.State, j.Grabbed = "imported", []string{seeded.Torrent}
+		j.Message = fmt.Sprintf("%d files imported from %s, which qBittorrent already seeds", seeded.Files, seeded.Torrent)
 	} else if fs := l.store.findingsFor(j.Target); len(fs) > 0 && !slices.ContainsFunc(fs, func(f Line) bool { return f.Str("status") != "at_best" }) {
 		j.Message = "the library already holds the SeaDex best"
 	} else {

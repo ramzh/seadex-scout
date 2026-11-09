@@ -2,6 +2,9 @@ package webui
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -226,5 +229,44 @@ func TestMonitorSeasonAndSearch(t *testing.T) {
 	}
 	if s := lib.Searches(); len(s) != 1 || s[0].Season != 2 {
 		t.Fatalf("searches = %+v", s)
+	}
+}
+
+// Misfit S2: E01 lost the best flags, the -ZR- pack is already seeding, so a
+// search can only hit qBittorrent's 409. The pack's E01 is imported instead;
+// E02, already at the minimum, is left alone.
+func TestImportSeedingTakesLowEpisodesFromABestTorrent(t *testing.T) {
+	qb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"hash": "ZRHASH", "name": "[-ZR-] Misfit S02", "content_path": "/data/torrents/anime/tv/Misfit S02", "progress": 1},
+			{"hash": "OTHER", "name": "something else", "content_path": "/data/x", "progress": 1},
+		})
+	}))
+	t.Cleanup(qb.Close)
+	ep := func(id, file int) map[string]any { return map[string]any{"id": id, "episodeFileId": file, "seasonNumber": 2} }
+	fake := &fakeSonarr{
+		files: []map[string]any{
+			{"id": 101, "seasonNumber": 2, "releaseGroup": "", "customFormatScore": 0},
+			{"id": 102, "seasonNumber": 2, "releaseGroup": "ZR", "customFormatScore": 5000},
+		},
+		rows: []map[string]any{
+			{"path": "/data/torrents/anime/tv/Misfit S02/E01.mkv", "series": map[string]int{"id": 7}, "episodes": []map[string]any{ep(1, 101)}},
+			{"path": "/data/torrents/anime/tv/Misfit S02/E02.mkv", "series": map[string]int{"id": 7}, "episodes": []map[string]any{ep(2, 102)}},
+		},
+	}
+	lib := newTestLibrary(t, fake)
+	lib.Qbit, _ = NewQbit(QbitConfig{URL: qb.URL})
+	lib.Best = func(context.Context) (map[string][]int, error) { return map[string][]int{"zrhash": {99}}, nil }
+	res, err := lib.ImportSeeding(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Files != 1 || res.Torrent != "[-ZR-] Misfit S02" || len(fake.cmds) != 1 {
+		t.Fatalf("res = %+v, cmds %v", res, fake.cmds)
+	}
+	files, _ := fake.cmds[0]["files"].([]any)
+	f0, _ := files[0].(map[string]any)
+	if fake.cmds[0]["name"] != "ManualImport" || len(files) != 1 || f0["indexerFlags"] != float64(sonarrBestFlags) || f0["downloadId"] != "ZRHASH" {
+		t.Fatalf("import command = %v", fake.cmds[0])
 	}
 }
