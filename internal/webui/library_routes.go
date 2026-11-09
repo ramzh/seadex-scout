@@ -115,7 +115,7 @@ func libraryRoutes(app *http.ServeMux, o Options) {
 			return
 		}
 		o.Log.Info("indexer flags fixed from the dashboard", "arr", t.Arr, "arr_id", t.ID, "season", t.Season,
-			"fixed", res.Fixed, "already_ok", res.AlreadyOK, "skipped", res.Skipped)
+			"fixed", res.Fixed, "cleared", res.Cleared, "already_ok", res.AlreadyOK, "skipped", res.Skipped)
 		writeJSON(w, res)
 	})
 	app.HandleFunc("GET /api/queue", func(w http.ResponseWriter, r *http.Request) {

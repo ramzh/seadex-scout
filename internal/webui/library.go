@@ -360,60 +360,95 @@ func normGroup(g string) string {
 // FlagFix is what FixFlags did.
 type FlagFix struct {
 	Fixed     int      `json:"fixed"`
-	Proven    int      `json:"proven"` // fixed by import proof rather than group
+	Proven    int      `json:"proven"`  // fixed by import proof rather than group
+	Cleared   int      `json:"cleared"` // stale best flags taken off
 	AlreadyOK int      `json:"already_ok"`
 	Skipped   int      `json:"skipped"`
 	Groups    []string `json:"groups"`
 	Skips     []string `json:"skips,omitempty"`
 }
 
-// FixFlags gives the target's files the flags a best grab carries, when they
-// score below the minimum and are proven to be the SeaDex best: either the
-// scout's own finding says the library holds the best and the file belongs to
-// that group, or the file was imported from a torrent the curation marks as
-// best for this series (provenFiles). The page cannot flag any file it likes.
+// FixFlags makes the target's best flags agree with SeaDex as the scout reads
+// it now, both ways.
+//
+// It adds them to a file that scores below the minimum and is proven to be the
+// SeaDex best: either the scout's own finding says the library holds the best
+// and the file belongs to that group, or the file was imported from a torrent
+// the curation marks as best for this series (provenFiles). The page cannot
+// flag any file it likes.
+//
+// It takes them off a file grabbed while its group was the best, once SeaDex
+// names another release: the flags would keep it at the minimum score and the
+// arr would reject the new best as "not an upgrade" (Irregular Witch S1:
+// Erai-raws grabbed 2026-11-01, Kitsune made best 2026-11-04). That needs a
+// better_release finding for the whole season or movie, keeps the files of the
+// current best groups and those proven imported from a best torrent, and
+// clears nothing when that proof cannot be read.
+//
+// A file the scout knows nothing about either way keeps its flags.
 func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 	var res FlagFix
 	a, err := l.arr(t.Arr)
 	if err != nil {
 		return res, err
 	}
-	groups := map[string]bool{}
+	groups := map[string]bool{} // a low file of these gets the flags
+	keep := map[string]bool{}   // with stale set, a flagged file of any other group loses them
 	var noGroups error
 	f, ok := l.store.findingFor(t)
-	switch status := f.Str("status"); {
+	status, scope := f.Str("status"), f.Str("scope")
+	// ponytail: an episode-scoped better_release (a special, a range) clears
+	// nothing; the rest of its season would need a per-episode match.
+	stale := ok && status == "better_release" && (scope == "season" || scope == "movie")
+	switch {
 	case !ok:
 		noGroups = errors.New("no finding for this title and no file imported from a SeaDex best torrent")
 	case status != "at_best" && status != "newer_revision":
 		noGroups = fmt.Errorf("the scout does not say you hold the SeaDex best here (status %s), and no file was imported from a SeaDex best torrent", status)
 	default:
 		groups = bestGroups(f)
-		for g := range groups {
-			res.Groups = append(res.Groups, g)
-		}
-		slices.Sort(res.Groups)
 	}
+	if stale {
+		if keep = bestGroups(f); len(keep) == 0 {
+			stale = false
+		}
+	}
+	for g := range groups {
+		res.Groups = append(res.Groups, g)
+	}
+	for g := range keep {
+		res.Groups = append(res.Groups, g)
+	}
+	slices.Sort(res.Groups)
 	files, err := l.files(ctx, a, t.ID)
 	if err != nil {
 		return res, err
 	}
-	tvdb, err := l.tvdbOf(ctx, a, t.ID)
-	if err != nil {
-		return res, err
-	}
 	best := bestFlags(t.Arr)
-	var low []arrFile
+	var low, flagged []arrFile
 	for _, file := range files {
 		if t.Arr == "sonarr" && t.Season >= 0 && file.SeasonNumber != t.Season {
 			continue
 		}
-		if flagBits(t.Arr, file.IndexerFlags)&best == best || file.CustomFormatScore >= l.minScore {
+		bits := flagBits(t.Arr, file.IndexerFlags)
+		if stale && bits&best != 0 && !keep[normGroup(file.ReleaseGroup)] {
+			flagged = append(flagged, file)
+			continue
+		}
+		if bits&best == best || file.CustomFormatScore >= l.minScore {
 			res.AlreadyOK++
 			continue
 		}
 		low = append(low, file)
 	}
-	proven, proofErr := l.provenFiles(ctx, a, t.ID, tvdb, low, nil)
+	if len(low) == 0 && len(flagged) == 0 {
+		return res, nil
+	}
+	tvdb, err := l.tvdbOf(ctx, a, t.ID)
+	if err != nil {
+		return res, err
+	}
+	proven, proofErr := l.provenFiles(ctx, a, t.ID, tvdb, append(slices.Clip(low), flagged...), nil)
 	type update struct {
 		ID           int `json:"id"`
 		IndexerFlags int `json:"indexerFlags"`
@@ -433,8 +468,24 @@ func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 		}
 		updates = append(updates, update{ID: file.ID, IndexerFlags: flagBits(t.Arr, file.IndexerFlags) | best})
 	}
+	res.Fixed = len(updates)
+	for _, file := range flagged {
+		switch {
+		case proofErr != nil:
+			res.Skipped++
+		case proven[file.ID]:
+			res.AlreadyOK++
+		default:
+			res.Cleared++
+			updates = append(updates, update{ID: file.ID, IndexerFlags: flagBits(t.Arr, file.IndexerFlags) &^ best})
+		}
+	}
 	if len(updates) == 0 {
-		if noGroups != nil && len(low) > 0 {
+		res.Fixed = 0
+		switch {
+		case proofErr != nil && len(flagged) > 0:
+			return res, fmt.Errorf("stale flags kept: import proof: %w", proofErr)
+		case noGroups != nil && len(low) > 0:
 			if proofErr != nil {
 				return res, fmt.Errorf("%w (import proof: %v)", noGroups, proofErr)
 			}
@@ -447,94 +498,9 @@ func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 		path = "/moviefile/bulk"
 	}
 	if err := a.call(ctx, http.MethodPut, path, updates, nil); err != nil {
+		res.Fixed, res.Cleared = 0, 0
 		return res, err
 	}
-	res.Fixed = len(updates)
-	l.forget(t)
-	return res, nil
-}
-
-// ClearStaleFlags is FixFlags in reverse: it takes the best flags off the
-// target's files when SeaDex now names another release as best. A file grabbed
-// while its group was the best keeps the flags, so it scores the minimum and
-// the arr rejects the new best as "not an upgrade" (Irregular Witch S1: Erai-raws
-// grabbed 2026-11-01, Kitsune made best 2026-11-04). It needs the scout's
-// better_release finding for a whole season or movie, keeps the files of the
-// current best groups and those proven imported from a best torrent, and
-// clears nothing when that proof cannot be read.
-func (l *Library) ClearStaleFlags(ctx context.Context, t Target) (FlagFix, error) {
-	var res FlagFix
-	a, err := l.arr(t.Arr)
-	if err != nil {
-		return res, err
-	}
-	f, ok := l.store.findingFor(t)
-	// ponytail: episode-scoped findings (a special, a range) are skipped; the
-	// files of the rest of the season would need a per-episode match.
-	if scope := f.Str("scope"); !ok || f.Str("status") != "better_release" || (scope != "season" && scope != "movie") {
-		return res, errors.New("the scout does not say a better release replaces this whole season or movie")
-	}
-	groups := bestGroups(f)
-	if len(groups) == 0 {
-		return res, errors.New("the finding names no best group")
-	}
-	for g := range groups {
-		res.Groups = append(res.Groups, g)
-	}
-	slices.Sort(res.Groups)
-	files, err := l.files(ctx, a, t.ID)
-	if err != nil {
-		return res, err
-	}
-	best := bestFlags(t.Arr)
-	var flagged []arrFile
-	for _, file := range files {
-		if t.Arr == "sonarr" && t.Season >= 0 && file.SeasonNumber != t.Season {
-			continue
-		}
-		if flagBits(t.Arr, file.IndexerFlags)&best == 0 {
-			continue
-		}
-		if groups[normGroup(file.ReleaseGroup)] {
-			res.AlreadyOK++
-			continue
-		}
-		flagged = append(flagged, file)
-	}
-	if len(flagged) == 0 {
-		return res, nil
-	}
-	tvdb, err := l.tvdbOf(ctx, a, t.ID)
-	if err != nil {
-		return res, err
-	}
-	proven, err := l.provenFiles(ctx, a, t.ID, tvdb, flagged, nil)
-	if err != nil {
-		return res, fmt.Errorf("import proof: %w", err)
-	}
-	type update struct {
-		ID           int `json:"id"`
-		IndexerFlags int `json:"indexerFlags"`
-	}
-	var updates []update
-	for _, file := range flagged {
-		if proven[file.ID] {
-			res.Proven++
-			continue
-		}
-		updates = append(updates, update{ID: file.ID, IndexerFlags: flagBits(t.Arr, file.IndexerFlags) &^ best})
-	}
-	if len(updates) == 0 {
-		return res, nil
-	}
-	path := "/episodefile/bulk"
-	if t.Arr == "radarr" {
-		path = "/moviefile/bulk"
-	}
-	if err := a.call(ctx, http.MethodPut, path, updates, nil); err != nil {
-		return res, err
-	}
-	res.Fixed = len(updates)
 	l.forget(t)
 	return res, nil
 }
@@ -802,7 +768,6 @@ func (l *Library) Run(ctx context.Context) {
 		if l.Auto {
 			if scanned {
 				l.autoFix(ctx)
-				l.autoUnflag(ctx)
 			}
 			l.autoImport(ctx)
 		}
@@ -829,12 +794,13 @@ func (l *Library) importsSince(ctx context.Context, since time.Time) int {
 }
 
 // autoFix runs Fix flags on every scanned season that can be proven to hold
-// the best: by import, or by the scout's finding.
+// the best (by import, or by the scout's finding) and on every season or movie
+// SeaDex now has a better release for. A target whose stale flags came off
+// gets a search in line, so the arr grabs the new best: an RSS sync never sees
+// a release published before the flags came off.
 func (l *Library) autoFix(ctx context.Context) {
+	targets := l.store.betterReleaseTargets()
 	for _, s := range l.Scan().Seasons {
-		if ctx.Err() != nil {
-			return
-		}
 		t := Target{Arr: s.Arr, ID: s.ID, Season: s.Season}
 		if s.Arr == "radarr" {
 			t.Season = -1
@@ -845,38 +811,27 @@ func (l *Library) autoFix(ctx context.Context) {
 				continue
 			}
 		}
-		res, err := l.FixFlags(ctx, t)
-		if err != nil {
-			l.log.Debug("automatic flag fix skipped", "arr", t.Arr, "arr_id", t.ID, "season", t.Season, "error", err)
-			continue
-		}
-		if res.Fixed > 0 {
-			l.log.Info("indexer flags fixed automatically", "arr", t.Arr, "arr_id", t.ID, "season", t.Season,
-				"title", s.Title, "fixed", res.Fixed, "proven", res.Proven, "skipped", res.Skipped)
+		if !slices.ContainsFunc(targets, func(j SearchJob) bool { return j.key() == t.key() }) {
+			targets = append(targets, SearchJob{Target: t, Title: s.Title})
 		}
 	}
-}
-
-// autoUnflag runs ClearStaleFlags on every better_release finding and puts a
-// search in line for each one it cleared, so the arr grabs the new best (an
-// RSS sync never sees a release published before the flags came off).
-func (l *Library) autoUnflag(ctx context.Context) {
-	for _, j := range l.store.betterReleaseTargets() {
+	for _, j := range targets {
 		if ctx.Err() != nil {
 			return
 		}
-		res, err := l.ClearStaleFlags(ctx, j.Target)
+		res, err := l.FixFlags(ctx, j.Target)
 		if err != nil {
-			l.log.Debug("stale flag clear skipped", "arr", j.Arr, "arr_id", j.ID, "season", j.Season, "error", err)
+			l.log.Debug("automatic flag fix skipped", "arr", j.Arr, "arr_id", j.ID, "season", j.Season, "error", err)
 			continue
 		}
-		if res.Fixed == 0 {
-			continue
+		if res.Fixed > 0 || res.Cleared > 0 {
+			l.log.Info("indexer flags fixed automatically", "arr", j.Arr, "arr_id", j.ID, "season", j.Season,
+				"title", j.Title, "fixed", res.Fixed, "proven", res.Proven, "cleared", res.Cleared, "skipped", res.Skipped)
 		}
-		l.log.Info("stale indexer flags cleared; SeaDex names another best", "arr", j.Arr, "arr_id", j.ID, "season", j.Season,
-			"title", j.Title, "cleared", res.Fixed, "kept_proven", res.Proven, "best_groups", strings.Join(res.Groups, ","))
-		if _, err := l.QueueSearches([]SearchJob{j}, false); err != nil {
-			l.log.Warn("could not queue a search after clearing stale flags", "arr", j.Arr, "arr_id", j.ID, "error", err)
+		if res.Cleared > 0 {
+			if _, err := l.QueueSearches([]SearchJob{j}, false); err != nil {
+				l.log.Warn("could not queue a search after clearing stale flags", "arr", j.Arr, "arr_id", j.ID, "error", err)
+			}
 		}
 	}
 }

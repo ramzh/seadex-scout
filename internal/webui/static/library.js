@@ -87,9 +87,10 @@ async function runAction(kind, t, btn) {
   try {
     if (kind === "fix") {
       const r = await postJSON("api/arr/fixflags", t);
-      const text = r.fixed ? `Fixed ${r.fixed} ✓` : r.skipped ? `0 fixed (${r.skipped} other group)` : "Already OK ✓";
+      const text = r.fixed || r.cleared ? [r.fixed && `Fixed ${r.fixed}`, r.cleared && `cleared ${r.cleared} stale`].filter(Boolean).join(", ") + " ✓"
+        : r.skipped ? `0 fixed (${r.skipped} other group)` : "Already OK ✓";
       lib.done.set(key, text);
-      if (btn) btn.title = [`${r.fixed} fixed (${r.proven} by import proof), ${r.already_ok} already scored, ${r.skipped} skipped`,
+      if (btn) btn.title = [`${r.fixed} fixed (${r.proven} by import proof), ${r.cleared || 0} stale cleared, ${r.already_ok} already scored, ${r.skipped} skipped`,
         r.groups && r.groups.length ? `SeaDex best groups: ${r.groups.join(", ")}` : "",
         ...(r.skips || [])].filter(Boolean).join("\n");
       if (lib.scan && r.fixed) lib.scan.seasons = lib.scan.seasons.filter((s) => !(s.arr === t.arr && s.id === t.id && (t.arr === "radarr" || t.season < 0 || s.season === t.season)));

@@ -257,7 +257,7 @@ func TestFixFlagsFlagsFilesImportedFromABestTorrent(t *testing.T) {
 // Irregular Witch S1: Erai-raws was grabbed as the best, then SeaDex named
 // Kitsune. Only the flagged non-best files lose the flags; a file imported from
 // a best torrent keeps them.
-func TestClearStaleFlagsUnflagsOnlyFilesSeaDexNoLongerCallsBest(t *testing.T) {
+func TestFixFlagsClearsOnlyFlagsSeaDexNoLongerBacks(t *testing.T) {
 	fake := &fakeSonarr{
 		files: []map[string]any{
 			{"id": 1, "seasonNumber": 1, "releaseGroup": "Erai-raws", "indexerFlags": 4 | sonarrBestFlags},
@@ -272,12 +272,12 @@ func TestClearStaleFlagsUnflagsOnlyFilesSeaDexNoLongerCallsBest(t *testing.T) {
 	}
 	lib := newTestLibrary(t, fake, finding("better_release", "kitsune", 1))
 	lib.Best = func(context.Context) (map[string][]int, error) { return map[string][]int{"abc": {99}}, nil }
-	res, err := lib.ClearStaleFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1})
+	res, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Fixed != 1 || res.AlreadyOK != 1 || res.Proven != 1 {
-		t.Fatalf("result = %+v, want 1 cleared, 1 best kept, 1 proven kept", res)
+	if res.Cleared != 1 || res.Fixed != 0 || res.AlreadyOK != 2 || res.Skipped != 1 {
+		t.Fatalf("result = %+v, want 1 cleared, the best and the proven kept, the unflagged one skipped", res)
 	}
 	if len(fake.bulk) != 1 || fake.bulk[0]["id"] != float64(1) || fake.bulk[0]["indexerFlags"] != float64(4) {
 		t.Fatalf("bulk update = %v, want file 1 with only its own flags", fake.bulk)
@@ -288,13 +288,13 @@ func TestClearStaleFlagsUnflagsOnlyFilesSeaDexNoLongerCallsBest(t *testing.T) {
 
 	fake.bulk = nil
 	lib.Best = func(context.Context) (map[string][]int, error) { return nil, errors.New("feed down") }
-	if _, err := lib.ClearStaleFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1}); err == nil || fake.bulk != nil {
+	if _, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1}); err == nil || fake.bulk != nil {
 		t.Fatalf("cleared without the import proof: %v, %v", err, fake.bulk)
 	}
 	for _, status := range []string{"at_best", "theoretical_best", "no_best"} {
 		lib := newTestLibrary(t, fake, finding(status, "kitsune", 1))
-		if _, err := lib.ClearStaleFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1}); err == nil || fake.bulk != nil {
-			t.Fatalf("%s: cleared flags without a better release: %v", status, fake.bulk)
+		if _, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1}); fake.bulk != nil {
+			t.Fatalf("%s: cleared flags without a better release: %v (%v)", status, fake.bulk, err)
 		}
 	}
 }
