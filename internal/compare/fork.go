@@ -187,13 +187,15 @@ func libraryBytes(item *library.Item, d *align.Decision) int64 {
 	return total
 }
 
-// Episode names payload.Span does not read, for sizing only: "S01.E05" (a
-// separator between season and episode) and a bare "Ep05", "Ep 05" or
-// "Episode 05". The shared parser is left alone because the indexer reads
-// releases with it too.
+// Episode names payload.Span does not read, for sizing and coverage only:
+// "S01.E05" (a separator between season and episode), a bare "Ep05", "Ep 05"
+// or "Episode 05", and a number right before the bracketed tags, "Black
+// Clover 017 (BD 1080p ...)" (the indexer's bareNumber). The shared parser is
+// left alone because the indexer reads releases with it too.
 var (
 	separatedEpisode = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])S(\d{1,2})[ ._]E(\d{1,4})(?:v\d+)?(?:[^a-z0-9]|$)`)
 	bareEpisode      = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])Ep(?:isode)?[ ._]?(\d{1,4})(?:v\d+)?(?:[^a-z0-9]|$)`)
+	bareTagged       = regexp.MustCompile(`\s(\d{2,4})(?:v\d+)?\s*[\[(]`)
 )
 
 // episodeSpans is payload.Spans with a fallback for the names above. A bare
@@ -219,7 +221,11 @@ func episodeSpans(files []seadex.File, season int, relative bool) ([]payload.Epi
 			spans = append(spans, payload.EpisodeSpan{Season: s, First: e, Last: e})
 			continue
 		}
-		if m := lastMatch(bareEpisode, base); m != nil {
+		m := lastMatch(bareEpisode, base)
+		if m == nil {
+			m = lastMatch(bareTagged, base)
+		}
+		if m != nil {
 			e, _ := strconv.Atoi(m[1])
 			s := payload.AbsoluteSeason
 			if relative {
