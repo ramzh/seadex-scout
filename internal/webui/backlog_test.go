@@ -257,6 +257,10 @@ func TestImportSeedingTakesLowEpisodesFromABestTorrent(t *testing.T) {
 	lib := newTestLibrary(t, fake)
 	lib.Qbit, _ = NewQbit(QbitConfig{URL: qb.URL})
 	lib.Best = func(context.Context) (map[string][]int, error) { return map[string][]int{"zrhash": {99}}, nil }
+	// A file outside the torrent (the library's own, as Sonarr returns with a
+	// seriesId) is never imported.
+	fake.rows = append(fake.rows, map[string]any{"path": "/data/media/anime/tv/Misfit/Season 02/E01.mkv",
+		"series": map[string]int{"id": 7}, "episodes": []map[string]any{ep(1, 101)}})
 	res, err := lib.ImportSeeding(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 2})
 	if err != nil {
 		t.Fatal(err)

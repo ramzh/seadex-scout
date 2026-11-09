@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -75,13 +74,16 @@ func (l *Library) ImportSeeding(ctx context.Context, t Target) (SeedingImport, e
 	reasons := map[string]int{}
 	for _, q := range seeding {
 		var rows []manualImportRow
-		v := url.Values{"folder": {q.ContentPath}, "seriesId": {strconv.Itoa(t.ID)}, "filterExistingFiles": {"false"}}
+		// No seriesId: with one, Sonarr scans the series' library folder, not
+		// the torrent, and "imports" the library's own files onto themselves
+		// (Haganai S00E02 was deleted as an upgrade of itself).
+		v := url.Values{"folder": {q.ContentPath}, "filterExistingFiles": {"false"}}
 		if err := a.call(ctx, http.MethodGet, "/manualimport?"+v.Encode(), nil, &rows); err != nil {
 			return res, err
 		}
 		var take []map[string]any
 		for _, r := range rows {
-			if r.Series == nil || r.Series.ID != t.ID || len(r.Episodes) == 0 {
+			if r.Series == nil || r.Series.ID != t.ID || len(r.Episodes) == 0 || !inside(r.Path, q.ContentPath) {
 				continue
 			}
 			want, other := false, false
@@ -132,4 +134,11 @@ func (l *Library) ImportSeeding(ctx context.Context, t Target) (SeedingImport, e
 	}
 	slices.Sort(res.Reasons)
 	return res, nil
+}
+
+// inside reports whether path is root or a file under it: only the torrent's
+// own files may be imported.
+func inside(path, root string) bool {
+	root = strings.TrimRight(root, "/")
+	return root != "" && (path == root || strings.HasPrefix(path, root+"/"))
 }
