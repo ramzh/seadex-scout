@@ -153,6 +153,12 @@ type Finding struct {
 	LibraryBytes    int64
 	EntryIncomplete bool
 	NoBestReason    string
+	// Uncovered lists the season's library files holding an episode no best
+	// release has, when CoverageKnown (Extended mode, a season scope whose
+	// best files all read as episodes of it). Black Clover's best stops at
+	// episode 51, so the files of 52-170 are uncovered.
+	Uncovered     []int
+	CoverageKnown bool
 	// ArrID is the item's id in its arr, for the dashboard to look up its
 	// monitored flags. Set in Extended mode only.
 	ArrID int

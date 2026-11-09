@@ -2,6 +2,7 @@ package notify
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/cplieger/seadex-scout/internal/compare"
@@ -50,6 +51,14 @@ func forkKVs(f *compare.Finding) []any {
 	}
 	if f.LibraryBytes > 0 {
 		kvs = append(kvs, "library_bytes", f.LibraryBytes)
+	}
+	if f.CoverageKnown {
+		ids := make([]string, len(f.Uncovered))
+		for i, id := range f.Uncovered {
+			ids[i] = strconv.Itoa(id)
+		}
+		// Empty when the best covers every file; absent when unknown.
+		kvs = append(kvs, "uncovered_files", strings.Join(ids, ","))
 	}
 	if f.EntryIncomplete {
 		kvs = append(kvs, "entry_incomplete", true)

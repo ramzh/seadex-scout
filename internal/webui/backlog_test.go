@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -65,5 +66,101 @@ func TestWhyNothingNamesTheSeaDexRejections(t *testing.T) {
 	fake.rels = fake.rels[3:]
 	if got := lib.whyNothing(t.Context(), lib.sonarr, Target{Arr: "sonarr", ID: 7, Season: 1}); !strings.HasPrefix(got, "no release reaching score 5000 among 1") {
 		t.Fatalf("why = %q", got)
+	}
+}
+
+// Misfit S2: the scout holds -ZR- and an untagged E01 that carries the best
+// flags. Only the untagged file loses them; an alt group the scout also lists
+// keeps them.
+func TestFixFlagsClearsExtraGroupsOfAnAtBestSeason(t *testing.T) {
+	fake := &fakeSonarr{files: []map[string]any{
+		{"id": 1, "seasonNumber": 2, "releaseGroup": "", "indexerFlags": sonarrBestFlags},
+		{"id": 2, "seasonNumber": 2, "releaseGroup": "ZR", "indexerFlags": sonarrBestFlags},
+		{"id": 3, "seasonNumber": 2, "releaseGroup": "Alt", "indexerFlags": sonarrBestFlags},
+	}}
+	f := finding("at_best", "zr", 2)
+	f.Attrs["current_group"] = "nogrp,zr,alt"
+	f.Attrs["alt_groups"] = "alt"
+	lib := newTestLibrary(t, fake, f)
+	lib.Best = func(context.Context) (map[string][]int, error) { return map[string][]int{}, nil }
+	if got := lib.store.betterReleaseTargets(); len(got) != 1 {
+		t.Fatalf("targets = %+v, want season 2", got)
+	}
+	res, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 2})
+	if err != nil || res.Cleared != 1 || len(fake.bulk) != 1 || fake.bulk[0]["id"] != float64(1) {
+		t.Fatalf("res = %+v, err %v, bulk %v; want only the untagged file cleared", res, err, fake.bulk)
+	}
+}
+
+// Haganai S00E02: a better release for one special clears only that episode's
+// file, not the other specials'.
+func TestFixFlagsEpisodeFindingCoversOnlyItsEpisodes(t *testing.T) {
+	fake := &fakeSonarr{
+		files: []map[string]any{
+			{"id": 10, "seasonNumber": 0, "releaseGroup": "Coalgirls", "indexerFlags": sonarrBestFlags},
+			{"id": 11, "seasonNumber": 0, "releaseGroup": "Coalgirls", "indexerFlags": sonarrBestFlags},
+		},
+		eps: []map[string]any{
+			{"id": 1, "seasonNumber": 0, "episodeNumber": 1, "episodeFileId": 10},
+			{"id": 2, "seasonNumber": 0, "episodeNumber": 2, "episodeFileId": 11},
+		},
+	}
+	f := finding("better_release", "reza", 0)
+	f.Attrs["scope"], f.Attrs["episodes"] = "episodes", "S00E02"
+	lib := newTestLibrary(t, fake, f)
+	lib.Best = func(context.Context) (map[string][]int, error) { return map[string][]int{}, nil }
+	res, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 0})
+	if err != nil || res.Cleared != 1 || len(fake.bulk) != 1 || fake.bulk[0]["id"] != float64(11) {
+		t.Fatalf("res = %+v, err %v, bulk %v; want only S00E02's file cleared", res, err, fake.bulk)
+	}
+}
+
+func TestEpisodeSpan(t *testing.T) {
+	got := episodeSpan("S00E11-E14, S00E16-E17")
+	if len(got) != 6 || got[0] != [2]int{0, 11} || got[5] != [2]int{0, 17} {
+		t.Fatalf("span = %v", got)
+	}
+}
+
+// Black Clover: the best stops at episode 51, so the alt's file for a later
+// episode earns the flags; once the best covers it, the flags come off again.
+func TestFixFlagsAltCoversAnEpisodeNoBestHas(t *testing.T) {
+	fake := &fakeSonarr{files: []map[string]any{
+		{"id": 1, "seasonNumber": 1, "releaseGroup": "CloverKnights", "customFormatScore": 5000, "indexerFlags": sonarrBestFlags},
+		{"id": 2, "seasonNumber": 1, "releaseGroup": "iAHD", "customFormatScore": 0, "indexerFlags": 64},
+		{"id": 3, "seasonNumber": 1, "releaseGroup": "Other", "customFormatScore": 0, "indexerFlags": 0},
+	}}
+	f := finding("at_best", "cloverknights", 1)
+	f.Attrs["alt_groups"] = "iahd"
+	f.Attrs["current_group"] = "cloverknights,iahd,other"
+	f.Attrs["uncovered_files"] = "2,3"
+	lib := newTestLibrary(t, fake, f)
+	lib.Best = func(context.Context) (map[string][]int, error) { return map[string][]int{}, nil }
+	res, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1})
+	if err != nil || res.AltCovers != 1 || len(fake.bulk) != 1 || fake.bulk[0]["id"] != float64(2) {
+		t.Fatalf("res = %+v, err %v, bulk %v; want iAHD's file flagged", res, err, fake.bulk)
+	}
+	// SeaDex's best now covers episode 2's file: its alt flags are stale.
+	fake.files[1]["indexerFlags"], fake.files[1]["customFormatScore"] = 64|sonarrBestFlags, 5000
+	fake.bulk = nil
+	lib.store.s.Findings[0].Attrs["uncovered_files"] = "3"
+	res, err = lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1})
+	if err != nil || res.Cleared != 1 || len(fake.bulk) != 1 || fake.bulk[0]["indexerFlags"] != float64(0) {
+		t.Fatalf("res = %+v, err %v, bulk %v; want iAHD's flags cleared", res, err, fake.bulk)
+	}
+}
+
+// An entry with a theoretical best only: its alt is the best there is.
+func TestFixFlagsAltOfANoBestEntry(t *testing.T) {
+	fake := &fakeSonarr{files: []map[string]any{
+		{"id": 1, "seasonNumber": 1, "releaseGroup": "CTR", "customFormatScore": 0, "indexerFlags": 0},
+	}}
+	f := finding("theoretical_best", "", 1)
+	f.Attrs["alt_groups"] = "ctr"
+	lib := newTestLibrary(t, fake, f)
+	lib.Best = func(context.Context) (map[string][]int, error) { return map[string][]int{}, nil }
+	res, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1})
+	if err != nil || res.AltCovers != 1 {
+		t.Fatalf("res = %+v, err %v; want the alt file flagged", res, err)
 	}
 }

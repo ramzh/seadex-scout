@@ -308,6 +308,33 @@ func absoluteEpisode(item *library.Item, season, n int) (int, bool) {
 	return found, ok
 }
 
+// uncoveredFiles lists the season's files that hold an episode the best set
+// does not, sorted; ok is false when that cannot be told: not a season scope,
+// a season another entry also maps, no best, or a best file that does not read
+// as an episode of the season with a file.
+func uncoveredFiles(m *match.Match, d *align.Decision, best []candidate) ([]int, bool) {
+	item := m.Item
+	if item == nil || d.Kind != align.ScopeSeason || len(best) == 0 || slices.Contains(m.SiblingSeasons, d.Season) {
+		return nil, false
+	}
+	covered, ok := coveredFiles(item, d.Season, best)
+	if !ok {
+		return nil, false
+	}
+	in := make(map[int]bool, len(covered))
+	for _, id := range covered {
+		in[id] = true
+	}
+	out := []int{}
+	for _, ep := range item.SeasonEpisodes[d.Season] {
+		if ep.File > 0 && !in[ep.File] && !slices.Contains(out, ep.File) {
+			out = append(out, ep.File)
+		}
+	}
+	slices.Sort(out)
+	return out, true
+}
+
 // fileCovered reports whether every episode file holds is in covered, so
 // replacing the file loses nothing the download does not bring back.
 func fileCovered(item *library.Item, file int, covered map[[2]int]bool) bool {

@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cplieger/seadex-scout/internal/release"
 )
 
 // Library actions: the dashboard's buttons that act on Sonarr and Radarr
@@ -362,8 +364,9 @@ func normGroup(g string) string {
 // FlagFix is what FixFlags did.
 type FlagFix struct {
 	Fixed     int      `json:"fixed"`
-	Proven    int      `json:"proven"`  // fixed by import proof rather than group
-	Cleared   int      `json:"cleared"` // stale best flags taken off
+	Proven    int      `json:"proven"`     // fixed by import proof rather than group
+	Cleared   int      `json:"cleared"`    // stale best flags taken off
+	AltCovers int      `json:"alt_covers"` // fixed as the alt for an episode no best has
 	AlreadyOK int      `json:"already_ok"`
 	Skipped   int      `json:"skipped"`
 	Groups    []string `json:"groups"`
@@ -382,10 +385,12 @@ type FlagFix struct {
 // It takes them off a file grabbed while its group was the best, once SeaDex
 // names another release: the flags would keep it at the minimum score and the
 // arr would reject the new best as "not an upgrade" (Irregular Witch S1:
-// Erai-raws grabbed 2026-11-01, Kitsune made best 2026-11-04). That needs a
-// better_release finding for the whole season or movie, keeps the files of the
-// current best groups and those proven imported from a best torrent, and
-// clears nothing when that proof cannot be read.
+// Erai-raws grabbed 2026-11-01, Kitsune made best 2026-11-04). staleRules says
+// which files: under a better_release finding, any group but the best; under
+// an at_best one, only the extra groups the scout itself lists beside the best
+// (Misfit S2's untagged E01). A finding for some episodes covers only their
+// files. Files proven imported from a best torrent keep the flags, and nothing
+// is cleared when that proof cannot be read.
 //
 // A file the scout knows nothing about either way keeps its flags.
 func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
@@ -395,13 +400,9 @@ func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 		return res, err
 	}
 	groups := map[string]bool{} // a low file of these gets the flags
-	keep := map[string]bool{}   // with stale set, a flagged file of any other group loses them
 	var noGroups error
 	f, ok := l.store.findingFor(t)
-	status, scope := f.Str("status"), f.Str("scope")
-	// ponytail: an episode-scoped better_release (a special, a range) clears
-	// nothing; the rest of its season would need a per-episode match.
-	stale := ok && status == "better_release" && (scope == "season" || scope == "movie")
+	status := f.Str("status")
 	switch {
 	case !ok:
 		noGroups = errors.New("no finding for this title and no file imported from a SeaDex best torrent")
@@ -410,19 +411,15 @@ func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 	default:
 		groups = bestGroups(f)
 	}
-	if stale {
-		if keep = bestGroups(f); len(keep) == 0 {
-			stale = false
-		}
-	}
 	for g := range groups {
-		res.Groups = append(res.Groups, g)
-	}
-	for g := range keep {
 		res.Groups = append(res.Groups, g)
 	}
 	slices.Sort(res.Groups)
 	files, err := l.files(ctx, a, t.ID)
+	if err != nil {
+		return res, err
+	}
+	rules, err := l.staleRules(ctx, a, t)
 	if err != nil {
 		return res, err
 	}
@@ -433,7 +430,7 @@ func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 			continue
 		}
 		bits := flagBits(t.Arr, file.IndexerFlags)
-		if stale && bits&best != 0 && !keep[normGroup(file.ReleaseGroup)] {
+		if bits&best != 0 && staleFile(rules, file) {
 			flagged = append(flagged, file)
 			continue
 		}
@@ -461,6 +458,8 @@ func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 		case groups[normGroup(file.ReleaseGroup)]:
 		case proven[file.ID]:
 			res.Proven++
+		case altCovers(rules, file):
+			res.AltCovers++
 		default:
 			res.Skipped++
 			if len(res.Skips) < 5 {
@@ -505,6 +504,185 @@ func (l *Library) FixFlags(ctx context.Context, t Target) (FlagFix, error) {
 	}
 	l.forget(t)
 	return res, nil
+}
+
+// staleRule is one finding's say on the best flags of the files it covers
+// (every file of the target when files is nil): which groups are its best and
+// alts, and, when known, which files hold an episode no best release has
+// (compare.Finding.Uncovered).
+type staleRule struct {
+	files     map[int]bool
+	best      map[string]bool
+	alt       map[string]bool
+	only      map[string]bool // unknown coverage on an at_best finding: the extra groups the scout lists
+	uncovered map[int]bool
+	known     bool // uncovered was reported
+	better    bool // a better_release finding
+	noBest    bool // a theoretical_best or no_best finding: no best to cover anything
+}
+
+// staleRules reads the target's better_release, at_best and newer_revision
+// findings into staleRules. A finding for some episodes covers those
+// episodes' files.
+func (l *Library) staleRules(ctx context.Context, a *arrAPI, t Target) ([]staleRule, error) {
+	var rules []staleRule
+	var byEpisode map[[2]int]int // (season, episode) to file id, read once
+	for _, f := range l.store.findingsFor(t) {
+		r := staleRule{best: bestGroups(f), alt: groupSet(f.Str("alt_groups"))}
+		switch f.Str("status") {
+		case "better_release":
+			r.better = true
+		case "at_best", "newer_revision":
+			r.only = map[string]bool{}
+			for g := range groupSet(f.Str("current_group")) {
+				if !r.best[g] && !r.alt[g] {
+					r.only[g] = true
+				}
+			}
+		case "theoretical_best", "no_best":
+			r.noBest = true
+		default:
+			continue
+		}
+		if len(r.best) == 0 && !r.noBest {
+			continue
+		}
+		if raw, ok := f.Attrs["uncovered_files"].(string); ok {
+			r.known, r.uncovered = true, map[int]bool{}
+			for id := range strings.SplitSeq(raw, ",") {
+				if n, err := strconv.Atoi(id); err == nil {
+					r.uncovered[n] = true
+				}
+			}
+		}
+		switch f.Str("scope") {
+		case "season", "movie":
+		case "episodes":
+			if byEpisode == nil {
+				var err error
+				if byEpisode, err = l.episodeFiles(ctx, a, t.ID); err != nil {
+					return nil, err
+				}
+			}
+			r.files = map[int]bool{}
+			for _, se := range episodeSpan(f.Str("episodes")) {
+				if id := byEpisode[se]; id > 0 {
+					r.files[id] = true
+				}
+			}
+		default:
+			continue
+		}
+		rules = append(rules, r)
+	}
+	return rules, nil
+}
+
+// ruleFor is the rule that covers file: an episode finding's before a whole
+// one's; ok is false when none does.
+func ruleFor(rules []staleRule, file arrFile) (staleRule, bool) {
+	pick := -1
+	for i, r := range rules {
+		if r.files != nil && r.files[file.ID] {
+			return r, true
+		}
+		if r.files == nil && pick < 0 {
+			pick = i
+		}
+	}
+	if pick < 0 {
+		return staleRule{}, false
+	}
+	return rules[pick], true
+}
+
+// staleFile reports whether file's best flags are stale. A file holding an
+// episode no best release has keeps them (the best cannot replace it). One the
+// best covers loses them unless its group is a best one. Where coverage is
+// unknown, a better_release finding clears any group but the best, and an
+// at_best one only the extra groups the scout lists beside the best and alts,
+// so a group Sonarr names differently from SeaDex never loses its flags.
+func staleFile(rules []staleRule, file arrFile) bool {
+	r, ok := ruleFor(rules, file)
+	if !ok || r.noBest {
+		return false
+	}
+	g := release.NormalizeGroup(file.ReleaseGroup)
+	if r.best[g] || r.best[normGroup(file.ReleaseGroup)] {
+		return false
+	}
+	switch {
+	case r.known:
+		return !r.uncovered[file.ID]
+	case r.better:
+		return true
+	}
+	return r.only[g]
+}
+
+// altCovers reports whether file is the SeaDex alt for an episode no best
+// release has, so it is the best the operator can get and earns the flags
+// (Black Clover 52-170: iAHD; every episode of an entry with a theoretical
+// best only, or none obtainable). Once the best covers that episode, staleFile
+// takes them off again and the arr upgrades.
+func altCovers(rules []staleRule, file arrFile) bool {
+	r, ok := ruleFor(rules, file)
+	if !ok || (!r.noBest && (!r.known || !r.uncovered[file.ID])) {
+		return false
+	}
+	g := release.NormalizeGroup(file.ReleaseGroup)
+	return r.alt[g] || r.alt[normGroup(file.ReleaseGroup)]
+}
+
+// groupSet reads a comma-separated group list as the scout writes it.
+func groupSet(list string) map[string]bool {
+	out := map[string]bool{}
+	for _, g := range strings.Split(list, ",") {
+		if g = normGroup(g); g != "" {
+			out[g] = true
+		}
+	}
+	return out
+}
+
+// episodeSpanRe reads one "S01E13-E24" or "S00E02" part of a finding's
+// episodes.
+var episodeSpanRe = regexp.MustCompile(`S(\d+)E(\d+)(?:-E(\d+))?`)
+
+// episodeSpan lists the (season, episode) pairs a finding's episodes name.
+func episodeSpan(spec string) [][2]int {
+	var out [][2]int
+	for _, m := range episodeSpanRe.FindAllStringSubmatch(spec, -1) {
+		s, _ := strconv.Atoi(m[1])
+		first, _ := strconv.Atoi(m[2])
+		last := first
+		if m[3] != "" {
+			last, _ = strconv.Atoi(m[3])
+		}
+		for e := first; e <= last && e-first < 2000; e++ {
+			out = append(out, [2]int{s, e})
+		}
+	}
+	return out
+}
+
+// episodeFiles maps a series' (season, episode) pairs to their file ids.
+func (l *Library) episodeFiles(ctx context.Context, a *arrAPI, series int) (map[[2]int]int, error) {
+	var eps []struct {
+		SeasonNumber  int `json:"seasonNumber"`
+		EpisodeNumber int `json:"episodeNumber"`
+		EpisodeFileID int `json:"episodeFileId"`
+	}
+	if err := a.call(ctx, http.MethodGet, "/episode?seriesId="+strconv.Itoa(series), nil, &eps); err != nil {
+		return nil, err
+	}
+	out := make(map[[2]int]int, len(eps))
+	for _, e := range eps {
+		if e.EpisodeFileID > 0 {
+			out[[2]int{e.SeasonNumber, e.EpisodeNumber}] = e.EpisodeFileID
+		}
+	}
+	return out, nil
 }
 
 // bestGroups is the finding's SeaDex best groups, normalized.
@@ -814,8 +992,15 @@ func (l *Library) autoFix(ctx context.Context, scanned bool) {
 			t.Season = -1
 		}
 		if s.Proven == 0 {
+			// The statuses FixFlags can act on: a best held, a best to make
+			// room for, or an alt that is the best there is.
 			f, ok := l.store.findingFor(t)
-			if st := f.Str("status"); !ok || (st != "at_best" && st != "newer_revision") {
+			switch f.Str("status") {
+			case "at_best", "newer_revision", "better_release", "theoretical_best", "no_best":
+			default:
+				ok = false
+			}
+			if !ok {
 				continue
 			}
 		}
@@ -1764,25 +1949,62 @@ func (st *Store) movieForHash(hash string) int {
 
 // findingFor returns the newest pass's finding for the target: the season's
 // own finding when there is one, else the whole series' one.
-// betterReleaseTargets is the whole seasons and movies whose finding says
-// SeaDex has a better release than the library holds.
+// betterReleaseTargets is the seasons and movies whose best flags may be
+// stale: a better_release finding (whole, or for some episodes), or an at_best
+// or newer_revision one that lists a held group beside the best and alt ones.
 func (st *Store) betterReleaseTargets() []SearchJob {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	var out []SearchJob
 	for _, f := range st.s.Findings {
-		if f.Str("status") != "better_release" {
+		switch f.Str("status") {
+		case "better_release":
+		case "at_best", "newer_revision":
+			keep := bestGroups(f)
+			for g := range groupSet(f.Str("alt_groups")) {
+				keep[g] = true
+			}
+			extra := false
+			for g := range groupSet(f.Str("current_group")) {
+				extra = extra || !keep[g]
+			}
+			if !extra {
+				continue
+			}
+		default:
 			continue
 		}
 		t := Target{Arr: f.Str("arr"), ID: int(f.Int("arr_id")), Season: int(f.Int("season"))}
 		switch f.Str("scope") {
 		case "movie":
 			t.Season = -1
-		case "season":
+		case "season", "episodes":
 		default:
 			continue
 		}
-		out = append(out, SearchJob{Target: t, Title: f.Str("title")})
+		if !slices.ContainsFunc(out, func(j SearchJob) bool { return j.key() == t.key() }) {
+			out = append(out, SearchJob{Target: t, Title: f.Str("title")})
+		}
+	}
+	return out
+}
+
+// findingsFor is every finding for the target: for a Sonarr season, its season
+// and episode findings; else every finding of the series or movie.
+func (st *Store) findingsFor(t Target) []Line {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	var out []Line
+	for _, f := range st.s.Findings {
+		if f.Str("arr") != t.Arr || int(f.Int("arr_id")) != t.ID {
+			continue
+		}
+		if t.Arr == "sonarr" && t.Season >= 0 {
+			if sc := f.Str("scope"); (sc != "season" && sc != "episodes") || int(f.Int("season")) != t.Season {
+				continue
+			}
+		}
+		out = append(out, f)
 	}
 	return out
 }
