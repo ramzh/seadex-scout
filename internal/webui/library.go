@@ -1704,14 +1704,24 @@ var (
 // (Gintama's S11E01-E14 for Sonarr's S10E13-E26), the grab's episodes in
 // order, only when the counts agree. Two files on one episode drop every guess.
 func (l *Library) matchByNumber(ctx context.Context, a *arrAPI, series int, rows []manualImportRow, grabbed map[int]bool) error {
-	var todo []int
+	// Rows Sonarr matched to episodes of the grab's own seasons that the grab
+	// was not for (Durarara!!x2 Part 3: its "- 26" to "- 37" files read as
+	// S02E01-E12, which the library holds, not E25-E36): they join the
+	// order-based match below. A row in another season (the pack's OVA, in
+	// Specials) keeps Sonarr's match.
+	grabSeasons := map[int]bool{}
+	var todo, wrong []int
 	for i, r := range rows {
-		if (r.Series == nil || len(r.Episodes) == 0) &&
-			episodeVideo(QbitFile{Name: cmp.Or(r.RelativePath, filepath.Base(r.Path)), Size: r.Size}) {
+		if !episodeVideo(QbitFile{Name: cmp.Or(r.RelativePath, filepath.Base(r.Path)), Size: r.Size}) {
+			continue
+		}
+		if r.Series == nil || len(r.Episodes) == 0 {
 			todo = append(todo, i)
 		}
 	}
-	if len(todo) == 0 {
+	// With a grab to compare against, the episodes are read even when every
+	// row is matched, to find the wrong ones.
+	if len(todo) == 0 && (len(grabbed) == 0 || series <= 0) {
 		return nil
 	}
 	var eps []struct {
@@ -1739,9 +1749,29 @@ func (l *Library) matchByNumber(ctx context.Context, a *arrAPI, series int, rows
 	slices.SortFunc(grabOrder, func(x, y int) int {
 		return cmp.Or(cmp.Compare(eps[x].SeasonNumber, eps[y].SeasonNumber), cmp.Compare(eps[x].EpisodeNumber, eps[y].EpisodeNumber))
 	})
+	for _, j := range grabOrder {
+		grabSeasons[eps[j].SeasonNumber] = true
+	}
+	for i, r := range rows {
+		if r.Series == nil || r.Series.ID != series || len(r.Episodes) == 0 ||
+			!episodeVideo(QbitFile{Name: cmp.Or(r.RelativePath, filepath.Base(r.Path)), Size: r.Size}) {
+			continue
+		}
+		mis := true
+		for _, e := range r.Episodes {
+			mis = mis && !grabbed[e.ID] && grabSeasons[e.SeasonNumber]
+		}
+		if mis {
+			wrong = append(wrong, i)
+		}
+	}
+	if len(todo) == 0 && len(wrong) == 0 {
+		return nil
+	}
 	guess := map[int]int{} // row -> eps index
 	type offRow struct{ row, s, e int }
 	var off []offRow
+	bare := map[int]int{} // row -> its bare number
 	for _, i := range todo {
 		name := filepath.Base(rows[i].Path)
 		if m := seasonEpisode.FindStringSubmatch(name); m != nil {
@@ -1757,16 +1787,73 @@ func (l *Library) matchByNumber(ctx context.Context, a *arrAPI, series int, rows
 		stem := bracketed.ReplaceAllString(strings.TrimSuffix(name, filepath.Ext(name)), " ")
 		if ms := bareNumber.FindAllStringSubmatch(stem+" ", -1); ms != nil {
 			n, _ := strconv.Atoi(ms[len(ms)-1][1])
-			if j, ok := byAbs[n]; ok {
+			bare[i] = n
+		}
+	}
+	// Bare numbers are absolute, or count within the season (Durarara!!x2
+	// Ketsu's "- 25" to "- 36" are S02E25-E36, while absolute 25 is S02E01).
+	// The pack is read the way that lands more files on episodes the grab
+	// was for; a tie keeps absolute.
+	relative := func(n int) (int, bool) {
+		for s := range grabSeasons {
+			if j, ok := bySE[key{s, n}]; ok {
+				return j, true
+			}
+		}
+		return 0, false
+	}
+	absHits, relHits := 0, 0
+	for _, n := range bare {
+		if j, ok := byAbs[n]; ok && grabbed[eps[j].ID] {
+			absHits++
+		}
+		if j, ok := relative(n); ok && grabbed[eps[j].ID] {
+			relHits++
+		}
+	}
+	for i, n := range bare {
+		if relHits > absHits {
+			if j, ok := relative(n); ok {
 				guess[i] = j
 			}
+		} else if j, ok := byAbs[n]; ok {
+			guess[i] = j
 		}
 	}
 	// ponytail: one season renumbered as a whole; mixed renumbering stays manual.
-	if len(off) > 0 && len(off) == len(grabOrder) && !slices.ContainsFunc(off, func(o offRow) bool { return o.s != off[0].s }) {
+	if len(off) > 0 && len(wrong) == 0 && len(off) == len(grabOrder) && !slices.ContainsFunc(off, func(o offRow) bool { return o.s != off[0].s }) {
 		slices.SortFunc(off, func(x, y offRow) int { return cmp.Compare(x.e, y.e) })
 		for k, o := range off {
 			guess[o.row] = grabOrder[k]
+		}
+	}
+	// Rows matched to the wrong episodes, with any still unmatched: when
+	// they are exactly as many as the episodes the grab was for, they take
+	// those episodes in the order of the numbers in their names. Anything
+	// else (a count off by one, a repeated number) stays as Sonarr had it.
+	if len(wrong) > 0 {
+		var rest []int
+		for _, i := range todo {
+			if _, ok := guess[i]; !ok {
+				rest = append(rest, i)
+			}
+		}
+		rest = append(rest, wrong...)
+		nums := map[int]int{}
+		distinct := map[int]bool{}
+		for _, i := range rest {
+			n, ok := fileNumber(filepath.Base(rows[i].Path))
+			if !ok || distinct[n] {
+				return nil
+			}
+			distinct[n], nums[i] = true, n
+		}
+		if len(rest) != len(grabOrder) {
+			return nil
+		}
+		slices.SortFunc(rest, func(x, y int) int { return cmp.Compare(nums[x], nums[y]) })
+		for k, i := range rest {
+			guess[i] = grabOrder[k]
 		}
 	}
 	// Names Sonarr could not match often parse to quality Unknown; the
@@ -2052,4 +2139,19 @@ func (st *Store) findingFor(t Target) (Line, bool) {
 		return *whole, true
 	}
 	return Line{}, false
+}
+
+// fileNumber is the episode number a file name carries: an SxxEyy episode,
+// else the last bare number before the bracketed tags.
+func fileNumber(name string) (int, bool) {
+	if m := seasonEpisode.FindStringSubmatch(name); m != nil {
+		n, err := strconv.Atoi(m[2])
+		return n, err == nil
+	}
+	stem := bracketed.ReplaceAllString(strings.TrimSuffix(name, filepath.Ext(name)), " ")
+	if ms := bareNumber.FindAllStringSubmatch(stem+" ", -1); ms != nil {
+		n, err := strconv.Atoi(ms[len(ms)-1][1])
+		return n, err == nil
+	}
+	return 0, false
 }

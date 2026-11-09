@@ -3,6 +3,7 @@ package webui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -322,5 +323,66 @@ func TestImportQueuedSkipsFilesFromTheSameDownload(t *testing.T) {
 	files, _ := fake.cmds[0]["files"].([]any)
 	if res.Files != 1 || len(files) != 1 || files[0].(map[string]any)["path"] != "/data/pack/27.mkv" {
 		t.Fatalf("result %+v, files %v; want only the episode with no file", res, files)
+	}
+}
+
+// Durarara!!x2 Part 3: Sonarr matches the "- 26" to "- 37" files to S02E01-E12,
+// which the library holds; the grab was for E25-E36. The files move to those
+// episodes in order, and the OVA's file, in Specials, keeps Sonarr's match.
+func TestMatchByNumberMovesFilesMatchedOutsideTheGrab(t *testing.T) {
+	var eps []map[string]any
+	for e := 1; e <= 36; e++ {
+		eps = append(eps, map[string]any{"id": 200 + e, "seasonNumber": 2, "episodeNumber": e, "episodeFileId": map[bool]int{true: 900 + e, false: 0}[e <= 12]})
+	}
+	eps = append(eps, map[string]any{"id": 301, "seasonNumber": 0, "episodeNumber": 3, "episodeFileId": 0})
+	fake := &fakeSonarr{eps: eps}
+	lib := newTestLibrary(t, fake)
+	ep := func(id, season int) map[string]any { return map[string]any{"id": id, "seasonNumber": season} }
+	var raw []map[string]any
+	for k := 0; k < 3; k++ {
+		raw = append(raw, map[string]any{"path": fmt.Sprintf("/d/Durarara!!x2 Ketsu - %02d (BD 1080p) [Kametsu].mkv", 26+k), "size": 1 << 30,
+			"series": map[string]int{"id": 7}, "episodes": []any{ep(201+k, 2)}})
+	}
+	raw = append(raw, map[string]any{"path": "/d/Durarara!!x2 OVA - 03 (BD 1080p) [Kametsu].mkv", "size": 1 << 30,
+		"series": map[string]int{"id": 7}, "episodes": []any{ep(301, 0)}})
+	body, _ := json.Marshal(raw)
+	var rows []manualImportRow
+	_ = json.Unmarshal(body, &rows)
+	grabbed := map[int]bool{225: true, 226: true, 227: true}
+	if err := lib.matchByNumber(t.Context(), lib.sonarr, 7, rows, grabbed); err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range []int{225, 226, 227, 301} {
+		if got := rows[k].Episodes[0].ID; got != want {
+			t.Fatalf("row %d matched to %d, want %d", k, got, want)
+		}
+	}
+}
+
+// Ketsu's files carry season-relative numbers with no season: "- 25" is
+// S02E25, the episode the grab was for, not absolute 25 (S02E01).
+func TestMatchByNumberPrefersTheGrabbedSeasonRelativeEpisode(t *testing.T) {
+	var eps []map[string]any
+	for e := 1; e <= 24; e++ {
+		eps = append(eps, map[string]any{"id": 100 + e, "seasonNumber": 1, "episodeNumber": e, "absoluteEpisodeNumber": e})
+	}
+	for e := 1; e <= 36; e++ {
+		eps = append(eps, map[string]any{"id": 200 + e, "seasonNumber": 2, "episodeNumber": e, "absoluteEpisodeNumber": 24 + e})
+	}
+	lib := newTestLibrary(t, &fakeSonarr{eps: eps})
+	rows := []manualImportRow{{Path: "/d/[Kametsu] Durarara!!x2 - 25 - Ketsu (BD 1080p) [4948569E].mkv", Size: 1 << 30}}
+	if err := lib.matchByNumber(t.Context(), lib.sonarr, 7, rows, map[int]bool{225: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows[0].Episodes) != 1 || rows[0].Episodes[0].ID != 225 {
+		t.Fatalf("matched %+v, want S02E25 (225)", rows[0].Episodes)
+	}
+	// Without a grab to go by, the absolute number holds.
+	rows = []manualImportRow{{Path: rows[0].Path, Size: 1 << 30}}
+	if err := lib.matchByNumber(t.Context(), lib.sonarr, 7, rows, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows[0].Episodes) != 1 || rows[0].Episodes[0].ID != 201 {
+		t.Fatalf("matched %+v, want absolute 25 = S02E01 (201)", rows[0].Episodes)
 	}
 }
