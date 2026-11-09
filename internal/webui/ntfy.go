@@ -22,10 +22,14 @@ const (
 	EventProblems = "problems" // a lasting problem or stalled checks, and their end
 	EventErrors   = "errors"   // a one-off error, at most once per message per errorRepeat
 	EventReports  = "reports"  // a report started from the dashboard finished
+	EventDigest   = "digest"   // once a day: searches, grabs and flag fixes since the last one
 )
 
 // AllEvents is every kind, the default.
-var AllEvents = []string{EventUpgrades, EventProblems, EventErrors, EventReports}
+var AllEvents = []string{EventUpgrades, EventProblems, EventErrors, EventReports, EventDigest}
+
+// digestHour is the local hour the daily digest goes out in.
+const digestHour = 9
 
 const (
 	// maxUpgradeMessages is how many upgrades one check sends one by one; the
@@ -92,6 +96,18 @@ type Notifier struct {
 
 	mu         sync.Mutex
 	lastErrors map[string]time.Time
+
+	// digestOf, when set, says what happened since a moment, for the daily
+	// digest; ok is false when nothing did. lastDigest is the day it last ran.
+	digestOf   func(since time.Time) (text string, ok bool)
+	lastDigest time.Time
+}
+
+// SetDigest sets what the daily digest reports. Run may already be going.
+func (n *Notifier) SetDigest(f func(since time.Time) (string, bool)) {
+	n.mu.Lock()
+	n.digestOf = f
+	n.mu.Unlock()
 }
 
 // NewNotifier checks cfg and returns a Notifier reading store's events.
@@ -140,7 +156,35 @@ func (n *Notifier) Run(ctx context.Context) {
 			for _, ev := range n.store.sweep(n.now()) {
 				n.handle(ctx, ev)
 			}
+			n.digest(ctx)
 		}
+	}
+}
+
+// digest sends the daily digest once a day, in digestHour local time. A
+// restart in that hour can send a second one, which is harmless.
+func (n *Notifier) digest(ctx context.Context) {
+	now := n.now()
+	n.mu.Lock()
+	digestOf := n.digestOf
+	n.mu.Unlock()
+	if !n.events[EventDigest] || digestOf == nil || now.Hour() != digestHour {
+		return
+	}
+	if y, m, d := n.lastDigest.Date(); y == now.Year() && m == now.Month() && d == now.Day() {
+		return
+	}
+	n.lastDigest = now
+	text, ok := digestOf(now.Add(-24 * time.Hour))
+	if !ok {
+		return
+	}
+	m := &ntfyMessage{Title: "SeaDex Scout · last 24 hours", Message: text, Tags: []string{"bar_chart"}, Priority: 2}
+	if n.cfg.DashboardURL != "" {
+		m.Click = n.cfg.DashboardURL
+	}
+	if err := n.send(ctx, m); err != nil {
+		n.failed(err)
 	}
 }
 

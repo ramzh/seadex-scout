@@ -339,3 +339,56 @@ func num(v any) float64 {
 	f, _ := v.(float64)
 	return f
 }
+
+// Digest says what the library actions did since a moment, for the daily
+// ntfy digest: the searches that finished (what they grabbed or imported, and
+// why the others found nothing) and the automatic flag fixes since the last
+// digest. ok is false when nothing happened.
+func (l *Library) Digest(since time.Time) (string, bool) {
+	l.mu.Lock()
+	fixes := l.fixStats
+	l.fixStats = FlagFix{}
+	jobs := slices.Clone(l.searches)
+	l.mu.Unlock()
+	var got, nothing []string
+	for _, j := range jobs {
+		if j.Finished.Before(since) {
+			continue
+		}
+		label := j.Title
+		if j.Arr == "sonarr" && j.Season >= 0 {
+			label += fmt.Sprintf(" S%d", j.Season)
+		}
+		switch j.State {
+		case "grabbed", "imported":
+			got = append(got, "• "+label+": "+strings.Join(j.Grabbed, " | "))
+		case "nothing":
+			nothing = append(nothing, "• "+label+": "+j.Message)
+		}
+	}
+	if len(got) == 0 && len(nothing) == 0 && fixes.Fixed+fixes.Cleared == 0 {
+		return "", false
+	}
+	var b strings.Builder
+	list := func(head string, lines []string, most int) {
+		if len(lines) == 0 {
+			return
+		}
+		fmt.Fprintf(&b, "%s (%d)\n", head, len(lines))
+		for i, s := range lines {
+			if i == most {
+				fmt.Fprintf(&b, "• … %d more on the dashboard\n", len(lines)-most)
+				break
+			}
+			b.WriteString(clip(s, 220) + "\n")
+		}
+		b.WriteString("\n")
+	}
+	list("Grabbed or imported", got, 10)
+	list("Searched, nothing grabbed", nothing, 8)
+	if fixes.Fixed+fixes.Cleared > 0 {
+		fmt.Fprintf(&b, "Flags: %d files given the best flags (%d as the alt for an episode no best has), %d stale ones cleared\n",
+			fixes.Fixed, fixes.AltCovers, fixes.Cleared)
+	}
+	return strings.TrimSpace(b.String()), true
+}

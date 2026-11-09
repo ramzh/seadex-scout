@@ -170,6 +170,7 @@ type Library struct {
 	searches   []SearchJob // newest first
 	lastSearch time.Time
 	backlog    map[string]backlogMark // by target key: the backlog's last search
+	fixStats   FlagFix                // automatic flag fixes since the last digest
 	searchWake chan struct{}
 }
 
@@ -1018,6 +1019,11 @@ func (l *Library) autoFix(ctx context.Context, scanned bool) {
 			continue
 		}
 		if res.Fixed > 0 || res.Cleared > 0 {
+			l.mu.Lock()
+			l.fixStats.Fixed += res.Fixed
+			l.fixStats.Cleared += res.Cleared
+			l.fixStats.AltCovers += res.AltCovers
+			l.mu.Unlock()
 			l.log.Info("indexer flags fixed automatically", "arr", j.Arr, "arr_id", j.ID, "season", j.Season,
 				"title", j.Title, "fixed", res.Fixed, "proven", res.Proven, "cleared", res.Cleared, "skipped", res.Skipped)
 		}

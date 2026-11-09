@@ -172,6 +172,9 @@ func (w *webUIRuntime) start(ctx context.Context, cfg *config.Config) func() {
 	if library.Auto {
 		log.Info("automatic flag fix and queue import on", "env", envAutoFix)
 	}
+	if notifier != nil {
+		notifier.SetDigest(library.Digest)
+	}
 	refresher := webui.NewLibraryRefresher(ctx, refreshAll, w.store)
 	library.Refresh = refresher.Start
 	go library.Run(ctx)

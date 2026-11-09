@@ -270,3 +270,26 @@ func TestImportSeedingTakesLowEpisodesFromABestTorrent(t *testing.T) {
 		t.Fatalf("import command = %v", fake.cmds[0])
 	}
 }
+
+func TestDigestSaysWhatHappened(t *testing.T) {
+	lib := newTestLibrary(t, &fakeSonarr{})
+	now := time.Now().UTC()
+	lib.searches = []SearchJob{
+		{Target: Target{Arr: "sonarr", ID: 1, Season: 1}, Title: "86", State: "grabbed", Grabbed: []string{"[koala] 86 S01"}, Finished: now},
+		{Target: Target{Arr: "sonarr", ID: 2, Season: 2}, Title: "Bungo", State: "nothing", Message: "3 SeaDex releases rejected: x (3)", Finished: now},
+		{Target: Target{Arr: "sonarr", ID: 3, Season: 1}, Title: "Old", State: "grabbed", Finished: now.Add(-48 * time.Hour)},
+	}
+	lib.fixStats = FlagFix{Fixed: 4, AltCovers: 3, Cleared: 1}
+	text, ok := lib.Digest(now.Add(-24 * time.Hour))
+	for _, want := range []string{"Grabbed or imported (1)", "86 S1: [koala] 86 S01", "Searched, nothing grabbed (1)", "Bungo S2: 3 SeaDex", "4 files given the best flags (3 as the alt", "1 stale ones cleared"} {
+		if !ok || !strings.Contains(text, want) {
+			t.Fatalf("digest lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Old") {
+		t.Fatalf("digest has a search older than a day:\n%s", text)
+	}
+	if _, ok := lib.Digest(now.Add(time.Minute)); ok {
+		t.Fatal("a second digest with nothing new is not empty")
+	}
+}

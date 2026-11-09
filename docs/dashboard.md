@@ -98,7 +98,7 @@ The container can send notifications to [ntfy](https://ntfy.sh) by itself, witho
 | `SEADEX_SCOUT_NTFY_URL` | The topic's full address. Empty turns notifications off. | _(unset)_ |
 | `SEADEX_SCOUT_NTFY_TOKEN` | An access token (`tk_...`) for a protected topic. | _(unset)_ |
 | `SEADEX_SCOUT_NTFY_USERNAME`, `SEADEX_SCOUT_NTFY_PASSWORD` | A user for a protected topic, instead of a token. | _(unset)_ |
-| `SEADEX_SCOUT_NTFY_EVENTS` | What to send, comma-separated. | `upgrades,problems,errors,reports` |
+| `SEADEX_SCOUT_NTFY_EVENTS` | What to send, comma-separated. `digest` is a daily summary at 09:00 local time of searches, grabs and flag fixes. | `upgrades,problems,errors,reports,digest` |
 | `SEADEX_SCOUT_NTFY_OPTIONAL` | `true` also sends upgrades where you already have a SeaDex alt. | `false` |
 | `SEADEX_SCOUT_NTFY_UNMONITORED` | `true` also sends upgrades for unmonitored series, seasons and movies. | `false` |
 | `SEADEX_SCOUT_DASHBOARD_URL` | The dashboard's address, for a Dashboard button on each message. | _(unset)_ |
