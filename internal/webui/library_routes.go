@@ -104,6 +104,21 @@ func libraryRoutes(app *http.ServeMux, o Options) {
 		o.Library.ClearSearches()
 		writeJSON(w, map[string]any{"searches": o.Library.Searches()})
 	})
+	app.HandleFunc("POST /api/arr/monitor", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Target
+			Title string `json:"title"`
+		}
+		if !ready(w, r, true) || !decode(w, r, &body) {
+			return
+		}
+		if err := o.Library.Monitor(r.Context(), body.Target, body.Title); err != nil {
+			fail(w, "monitor", err)
+			return
+		}
+		o.Log.Info("monitored and searched from the dashboard", "arr", body.Arr, "arr_id", body.ID, "season", body.Season, "title", body.Title)
+		writeJSON(w, map[string]any{"monitored": true, "searches": o.Library.Searches()})
+	})
 	app.HandleFunc("POST /api/arr/fixflags", func(w http.ResponseWriter, r *http.Request) {
 		var t Target
 		if !ready(w, r, true) || !decode(w, r, &t) {

@@ -784,3 +784,6 @@ blockquote.notes { margin: 12px 0 0; padding: 12px 14px; border-radius: 10px; ba
 body[data-tab="series"] .page-head h1 { display: none; }
 .season-actions .act-btn { min-height: 36px; padding: 0 14px; font-size: 13px; border-radius: 9px; }
 .season-actions .score-badge { padding: 4px 9px; }
+.last-search { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.last-why { flex-basis: 100%; color: var(--muted); overflow-wrap: anywhere; }
+.act-btn.monitor { color: var(--warn); border-color: var(--warn); }

@@ -201,7 +201,22 @@ function seasonCard(f, kind) {
       why.text !== k.label && !(kind === "atbest" && a.status === "at_best") ? el("span", { class: "tag " + why.cls, text: why.text }) : null),
     el("div", { class: "compare" }, held, el("span", { class: "arrow big", "aria-hidden": "true", text: "→" }), best),
     uncovered ? el("p", { class: "muted small", text: `${uncovered} file${uncovered === 1 ? "" : "s"} hold an episode SeaDex's best does not have; its alt counts as the best for ${uncovered === 1 ? "it" : "them"}.` }) : null,
+    lastSearch(a),
     actions.childNodes.length ? el("div", { class: "season-actions" }, ...actions.childNodes) : null);
+}
+
+// lastSearch is the newest search of the finding's season or film, with what
+// came of it and why (library.js keeps them).
+function lastSearch(a) {
+  const t = targetOf(a);
+  const j = t && searchFor(t);
+  if (!j) return null;
+  const st = searchState(j);
+  const when = j.finished || j.started || j.added;
+  return el("div", { class: "last-search" },
+    el("span", { class: "tag " + st.cls, text: st.text }),
+    el("span", { class: "muted small", title: fmtTime(when), text: `last search ${ago(when, new Date(state.snap.now).getTime())}` }),
+    st.detail ? el("span", { class: "small last-why", text: st.detail }) : null);
 }
 
 function sideBlock(label, group, detail, size, links, best) {

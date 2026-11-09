@@ -121,8 +121,40 @@ function findingActions(f) {
   const action = actionFor(a);
   if (score) td.append(el("span", { class: "score-badge", title: `Lowest custom format score ${score.min}`, text: `${score.low}/${score.files} below ${lib.scan.min_score}` }));
   if (action === "fix" && score) td.append(actionButton("fix", t, "Fix flags", "Give this season's files from the SeaDex best group the Freeleech25 + Scene flags, so the Seadex custom format scores them"));
-  if (action === "search") td.append(actionButton("search", t, "Search", `Ask ${arrName(t.arr)} to search ${t.arr === "radarr" ? "this movie" : t.season >= 0 ? "this season" : "this series"} now`));
+  const unmonitored = state.snap ? unmonitoredReason(state.snap)(f) : "";
+  if (unmonitored && a.recommended_group && (t.arr === "radarr" || t.season >= 0)) {
+    td.append(monitorButton(t, a.title || "?", unmonitored));
+  } else if (action === "search") {
+    td.append(actionButton("search", t, "Search", `Ask ${arrName(t.arr)} to search ${t.arr === "radarr" ? "this movie" : t.season >= 0 ? "this season" : "this series"} now`));
+  }
   return td;
+}
+
+// monitorButton sets an unmonitored season or film with a SeaDex best
+// monitored in the arr and searches it first in line.
+function monitorButton(t, title, why) {
+  const key = actionKey("monitor", t);
+  const btn = el("button", { type: "button", class: "act-btn monitor", title: `${why[0].toUpperCase() + why.slice(1)}. Monitor it in ${arrName(t.arr)} and search now.` });
+  if (lib.done.has(key)) { btn.textContent = lib.done.get(key); btn.classList.add("done"); btn.disabled = true; return btn; }
+  btn.textContent = "Monitor and search";
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "Monitoring…";
+    try {
+      const r = await postJSON("api/arr/monitor", { arr: t.arr, id: t.id, season: t.season, title });
+      lib.done.set(key, "Monitored ✓");
+      btn.textContent = "Monitored ✓";
+      btn.classList.add("done");
+      if (r.searches) { lib.searches = r.searches; renderSearches(); }
+      toast(`${title}: monitored in ${arrName(t.arr)}; a search is first in line.`, "good");
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Failed – retry";
+      btn.classList.add("failed");
+      toast(`${title}: could not monitor: ${err.message}`, "bad");
+    }
+  });
+  return btn;
 }
 
 // ---------- Library tab ----------

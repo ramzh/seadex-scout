@@ -2,6 +2,7 @@ package webui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -129,8 +130,8 @@ func (l *Library) markFound(key string, found bool) {
 // releaseDecision is the part of a /release answer afterNothing reads: Sonarr
 // 5 nests the release and its verdict, Radarr 3 keeps them at the top.
 type releaseDecision struct {
-	DownloadAllowed   *bool `json:"downloadAllowed"`
-	Decision          *struct {
+	DownloadAllowed *bool `json:"downloadAllowed"`
+	Decision        *struct {
 		Rejections []struct {
 			Reason  string `json:"reason"`
 			Message string `json:"message"`
@@ -262,4 +263,79 @@ func (l *Library) afterNothing(ctx context.Context, a *arrAPI, t Target) nothing
 	}
 	v.why = fmt.Sprintf("%d SeaDex releases rejected: %s", v.seadex, strings.Join(reasons, "; "))
 	return v
+}
+
+// Monitor sets the target monitored in the arr, season and episodes for a
+// Sonarr season, and puts a search for it at the head of the line. The page
+// offers it on a season with a SeaDex best that Sonarr left unmonitored
+// (BLUE LOCK S2, Oshi no Ko S2: new seasons of followed series).
+func (l *Library) Monitor(ctx context.Context, t Target, title string) error {
+	a, err := l.arr(t.Arr)
+	if err != nil {
+		return err
+	}
+	if t.ID <= 0 {
+		return errors.New("no id to monitor")
+	}
+	if t.Arr == "radarr" {
+		path := "/movie/" + strconv.Itoa(t.ID)
+		var movie map[string]any
+		if err := a.call(ctx, http.MethodGet, path, nil, &movie); err != nil {
+			return err
+		}
+		movie["monitored"] = true
+		if err := a.call(ctx, http.MethodPut, path, movie, nil); err != nil {
+			return err
+		}
+	} else {
+		if t.Season < 0 {
+			return errors.New("pick a season to monitor")
+		}
+		path := "/series/" + strconv.Itoa(t.ID)
+		var series map[string]any
+		if err := a.call(ctx, http.MethodGet, path, nil, &series); err != nil {
+			return err
+		}
+		seasons, _ := series["seasons"].([]any)
+		found := false
+		for _, s := range seasons {
+			if m, ok := s.(map[string]any); ok && int(num(m["seasonNumber"])) == t.Season {
+				m["monitored"], found = true, true
+			}
+		}
+		if !found {
+			return fmt.Errorf("season %d is not in this series", t.Season)
+		}
+		series["monitored"] = true
+		if err := a.call(ctx, http.MethodPut, path, series, nil); err != nil {
+			return err
+		}
+		var eps []struct {
+			ID           int `json:"id"`
+			SeasonNumber int `json:"seasonNumber"`
+		}
+		if err := a.call(ctx, http.MethodGet, "/episode?seriesId="+strconv.Itoa(t.ID), nil, &eps); err != nil {
+			return err
+		}
+		var ids []int
+		for _, e := range eps {
+			if e.SeasonNumber == t.Season {
+				ids = append(ids, e.ID)
+			}
+		}
+		if len(ids) > 0 {
+			if err := a.call(ctx, http.MethodPut, "/episode/monitor", map[string]any{"episodeIds": ids, "monitored": true}, nil); err != nil {
+				return err
+			}
+		}
+	}
+	l.store.markMonitored(t)
+	_, err = l.QueueSearches([]SearchJob{{Target: t, Title: title}}, true)
+	return err
+}
+
+// num reads a JSON number decoded into any.
+func num(v any) float64 {
+	f, _ := v.(float64)
+	return f
 }

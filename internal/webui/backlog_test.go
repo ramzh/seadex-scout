@@ -198,3 +198,33 @@ func TestAfterNothingGrabsAnApprovedSeaDexRelease(t *testing.T) {
 		t.Fatalf("verdict %+v, grabs %v", v, fake.grabs)
 	}
 }
+
+// BLUE LOCK S2: monitoring a season sets its flag and its episodes', drops it
+// from the unmonitored keys and searches it first.
+func TestMonitorSeasonAndSearch(t *testing.T) {
+	fake := &fakeSonarr{
+		series: map[string]any{"id": 7, "monitored": true, "seasons": []map[string]any{
+			{"seasonNumber": 1, "monitored": true}, {"seasonNumber": 2, "monitored": false}}},
+		eps: []map[string]any{{"id": 11, "seasonNumber": 1}, {"id": 21, "seasonNumber": 2}, {"id": 22, "seasonNumber": 2}},
+	}
+	lib := newTestLibrary(t, fake)
+	lib.store.monitored = Monitored{At: time.Now(), Unmonitored: []string{"sonarr:7:2"}}
+	if err := lib.Monitor(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 2}, "BLUE LOCK"); err != nil {
+		t.Fatal(err)
+	}
+	put, _ := fake.puts["/api/v5/series/7"].(map[string]any)
+	seasons, _ := put["seasons"].([]any)
+	if len(seasons) != 2 || seasons[1].(map[string]any)["monitored"] != true {
+		t.Fatalf("series PUT = %v", put)
+	}
+	mon, _ := fake.puts["/api/v5/episode/monitor"].(map[string]any)
+	if ids, _ := mon["episodeIds"].([]any); len(ids) != 2 || mon["monitored"] != true {
+		t.Fatalf("episode monitor = %v", mon)
+	}
+	if len(lib.store.monitored.Unmonitored) != 0 {
+		t.Fatalf("still unmonitored: %v", lib.store.monitored.Unmonitored)
+	}
+	if s := lib.Searches(); len(s) != 1 || s[0].Season != 2 {
+		t.Fatalf("searches = %+v", s)
+	}
+}

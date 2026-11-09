@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -194,4 +195,16 @@ func (st *Store) setMonitored(keys []string, errText string) {
 	}
 	st.monitored.Unmonitored = keys
 	st.monitored.At = st.now().UTC()
+}
+
+// markMonitored drops t (and, for a season, its series) from the unmonitored
+// keys at once, so the page stops offering to monitor it before the next
+// read of the flags.
+func (st *Store) markMonitored(t Target) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	base := t.Arr + ":" + strconv.Itoa(t.ID)
+	st.monitored.Unmonitored = slices.DeleteFunc(slices.Clone(st.monitored.Unmonitored), func(k string) bool {
+		return k == base || k == t.key()
+	})
 }

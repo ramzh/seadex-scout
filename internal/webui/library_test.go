@@ -26,6 +26,8 @@ type fakeSonarr struct {
 	eps     []map[string]any // GET /episode; two plain episodes when nil
 	rels    []map[string]any // GET /release
 	grabs   []map[string]any // POST /release
+	series  map[string]any   // GET /series/7, when set
+	puts    map[string]any   // PUT bodies by path
 	roots   []string
 	status  string // GET /command/{id}
 }
@@ -35,6 +37,16 @@ func (f *fakeSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/api/v5/system/status":
 		_ = enc.Encode(map[string]string{"version": "5.0.0"})
+	case r.Method == http.MethodPut && r.URL.Path != "/api/v5/episodefile/bulk":
+		var body any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if f.puts == nil {
+			f.puts = map[string]any{}
+		}
+		f.puts[r.URL.Path] = body
+		w.WriteHeader(http.StatusAccepted)
+	case r.URL.Path == "/api/v5/series/7" && f.series != nil:
+		_ = enc.Encode(f.series)
 	case r.URL.Path == "/api/v5/series/7":
 		_ = enc.Encode(map[string]int{"id": 7, "tvdbId": 99})
 	case r.URL.Path == "/api/v5/rootfolder":
