@@ -331,6 +331,7 @@ function render() {
   const schedule = interval === -1 ? "SeaDex checks are started from outside the container"
     : interval ? `SeaDex checked every ${fmtSpan(interval)}${lastSeaDex}, full check daily`
     : "SeaDex checked on the scout's schedule";
+  $("brand-version").textContent = snap.version ? snap.version.replace(/^personal@/, "") : "";
   $("footer-text").textContent = `Page refreshed ${fmtTime(snap.now)} from this container every ${REFRESH_MS / 1000}s (never contacts SeaDex) · ${schedule}` +
     (snap.version ? ` · build ${snap.version}` : "");
 
@@ -485,6 +486,7 @@ function renderOverview(snap) {
   for (const tile of document.querySelectorAll(".kpi[data-why]")) {
     tile.classList.toggle("selected", tile.dataset.why === $("upgrades-why").value);
   }
+  renderHero(rows, ready, upgradesShown);
 
   const lib = snap.library && snap.library.attrs;
   if (lib && num(lib.anime_items)) {
@@ -511,6 +513,54 @@ function renderOverview(snap) {
   // Hundreds of rows: drawn only while unfolded.
   if ($("atbest-fold").open) renderFindings("atbest", atBest, now, ready ? "None yet." : "Waiting for the first check.");
   else $("atbest-count").textContent = atBest.length;
+}
+
+// The hero's status classes, in bar order: what the scout says of every
+// monitored season and film it compared. A why filter value makes the legend
+// entry a shortcut to those rows.
+const HERO_KINDS = [
+  ["atbest", "On a SeaDex pick", ""],
+  ["upgrade", "Upgrade", "upgrade"],
+  ["missing", "Not downloaded", "missing"],
+  ["groups", "Group to check", "groups"],
+  ["nobest", "No SeaDex best", "nobest"],
+];
+const RING_LENGTH = 339.3; // 2πr for r = 54
+
+// renderHero draws the overview's headline, ring and status bar from the
+// rows the tables show (unmonitored ones out unless shown).
+function renderHero(rows, ready, upgrades) {
+  const counts = Object.fromEntries(HERO_KINDS.map(([k]) => [k, 0]));
+  for (const f of rows) counts[kindOf(f)] = (counts[kindOf(f)] || 0) + 1;
+  const total = HERO_KINDS.reduce((n, [k]) => n + counts[k], 0);
+  const need = upgrades + counts.groups;
+  $("headline").textContent = !ready ? "Waiting for the first check"
+    : need ? `${need} thing${need === 1 ? "" : "s"} need${need === 1 ? "s" : ""} you` : "Nothing needs you";
+  const share = total ? counts.atbest / total : 0;
+  $("ring-pct").textContent = ready && total ? Math.round(100 * share) + "%" : "–";
+  $("ring-arc").setAttribute("stroke-dasharray", `${(RING_LENGTH * share).toFixed(1)} ${RING_LENGTH}`);
+  $("hero-count").textContent = ready ? `${counts.atbest} of ${total}` : "–";
+  $("hero-of").textContent = ready ? "compared seasons and films are on SeaDex's best, or its alt where it names no best" : "";
+  // The page's CSP refuses style attributes; the CSSOM sets the widths.
+  $("status-bar").replaceChildren(...HERO_KINDS.filter(([k]) => counts[k]).map(([k, label]) => {
+    const seg = el("span", { class: "k-" + k, title: `${label}: ${counts[k]}` });
+    seg.style.flexGrow = String(counts[k]);
+    return seg;
+  }));
+  const why = $("upgrades-why").value;
+  $("status-legend").replaceChildren(...HERO_KINDS.map(([k, label, filter]) => {
+    const dot = el("span", { class: "dot k-" + k });
+    const text = `${label} ${ready ? counts[k] : "–"}`;
+    if (!filter) return el("span", { class: "legend-item" }, dot, text);
+    return el("button", {
+      type: "button", class: "legend-item" + (why === filter ? " selected" : ""),
+      "aria-pressed": String(why === filter), title: `Show only: ${label.toLowerCase()}`,
+      onclick: () => {
+        $("upgrades-why").value = why === filter ? "" : filter;
+        $("upgrades-why").dispatchEvent(new Event("input"));
+      },
+    }, dot, text);
+  }));
 }
 
 const LIBRARY_BARS = [
