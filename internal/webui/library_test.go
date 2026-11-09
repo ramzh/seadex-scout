@@ -24,6 +24,7 @@ type fakeSonarr struct {
 	bulk    []map[string]any
 	cmds    []map[string]any
 	eps     []map[string]any // GET /episode; two plain episodes when nil
+	rels    []map[string]any // GET /release
 	roots   []string
 	status  string // GET /command/{id}
 }
@@ -55,6 +56,8 @@ func (f *fakeSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = enc.Encode([]map[string]int{{"id": 1, "seasonNumber": 1}, {"id": 2, "seasonNumber": 2}})
 	case r.URL.Path == "/api/v5/history":
 		_ = enc.Encode(map[string]any{"records": f.history})
+	case r.URL.Path == "/api/v5/release":
+		_ = enc.Encode(f.rels)
 	case r.URL.Path == "/api/v5/manualimport":
 		_ = enc.Encode(f.rows)
 	case strings.HasPrefix(r.URL.Path, "/api/v5/command/"):

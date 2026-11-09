@@ -241,8 +241,12 @@ func (l *Library) followSearch(ctx context.Context, j SearchJob) SearchJob {
 	j.State = "nothing"
 	if len(grabs) > 0 {
 		j.State = "grabbed"
+	} else if f, ok := l.store.findingFor(j.Target); !ok || f.Str("status") != "at_best" {
+		j.Message = l.whyNothing(ctx, a, j.Target)
+	} else {
+		j.Message = "the library already holds the SeaDex best"
 	}
-	l.log.Info("search finished", "arr", j.Arr, "arr_id", j.ID, "season", j.Season, "title", j.Title, "result", j.State, "grabbed", strings.Join(grabs, " | "))
+	l.log.Info("search finished", "arr", j.Arr, "arr_id", j.ID, "season", j.Season, "title", j.Title, "result", j.State, "grabbed", strings.Join(grabs, " | "), "why", j.Message)
 	return j
 }
 

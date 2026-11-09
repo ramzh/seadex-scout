@@ -274,7 +274,7 @@ function searchState(j) {
     case "queued": return { text: "Queued…", cls: "info", detail: `${arrName(j.arr)} has the search queued` };
     case "started": return { text: "Searching…", cls: "info", detail: `${arrName(j.arr)} is searching the indexers` };
     case "grabbed": return { text: "Grabbed ✓", cls: "good", detail: "Grabbed: " + (j.grabbed || []).join(" | ") };
-    case "nothing": return { text: "Nothing grabbed", cls: "warn", detail: (j.message ? j.message.replace(/\.*$/, ". ") : "") + "No release the profile accepts was found" };
+    case "nothing": return { text: "Nothing grabbed", cls: "warn", detail: j.message || "No release the profile accepts was found" };
     case "failed": return { text: "Failed", cls: "bad", detail: j.message || "The search failed" };
     case "cancelled": return { text: "Cancelled", cls: "", detail: "Dropped from the line" };
   }

@@ -167,6 +167,7 @@ type Library struct {
 
 	searches   []SearchJob // newest first
 	lastSearch time.Time
+	backlog    map[string]backlogMark // by target key: the backlog's last search
 	searchWake chan struct{}
 }
 
@@ -191,8 +192,9 @@ func NewLibrary(sonarr, radarr Arr, minScore int, store *Store, log *slog.Logger
 const libraryStateFile = "library-state.json"
 
 type libraryState struct {
-	Scan     ScoreScan   `json:"scan"`
-	Searches []SearchJob `json:"searches"`
+	Scan     ScoreScan              `json:"scan"`
+	Searches []SearchJob            `json:"searches"`
+	Backlog  map[string]backlogMark `json:"backlog,omitempty"`
 }
 
 func (l *Library) load() {
@@ -206,7 +208,7 @@ func (l *Library) load() {
 		return
 	}
 	st.Scan.Running = false
-	l.scan, l.lastScan, l.searches = st.Scan, st.Scan.FinishedAt, st.Searches
+	l.scan, l.lastScan, l.searches, l.backlog = st.Scan, st.Scan.FinishedAt, st.Searches, st.Backlog
 }
 
 // persistLocked writes the scan and the searches, through a temp file and a
@@ -217,7 +219,7 @@ func (l *Library) persistLocked() {
 	if l.path == "" {
 		return
 	}
-	raw, err := json.Marshal(libraryState{Scan: l.scan, Searches: l.searches})
+	raw, err := json.Marshal(libraryState{Scan: l.scan, Searches: l.searches, Backlog: l.backlog})
 	if err == nil {
 		tmp := l.path + ".tmp"
 		if err = os.WriteFile(tmp, raw, 0o600); err == nil {
@@ -770,6 +772,7 @@ func (l *Library) Run(ctx context.Context) {
 			// stale flags come off on the next tick; proven low files wait for
 			// a scan.
 			l.autoFix(ctx, scanned)
+			l.autoBacklog()
 			l.autoImport(ctx)
 		}
 	}
