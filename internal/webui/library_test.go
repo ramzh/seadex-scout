@@ -25,6 +25,7 @@ type fakeSonarr struct {
 	cmds    []map[string]any
 	eps     []map[string]any // GET /episode; two plain episodes when nil
 	rels    []map[string]any // GET /release
+	grabs   []map[string]any // POST /release
 	roots   []string
 	status  string // GET /command/{id}
 }
@@ -56,6 +57,11 @@ func (f *fakeSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = enc.Encode([]map[string]int{{"id": 1, "seasonNumber": 1}, {"id": 2, "seasonNumber": 2}})
 	case r.URL.Path == "/api/v5/history":
 		_ = enc.Encode(map[string]any{"records": f.history})
+	case r.URL.Path == "/api/v5/release" && r.Method == http.MethodPost:
+		var g map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&g)
+		f.grabs = append(f.grabs, g)
+		_ = enc.Encode(g)
 	case r.URL.Path == "/api/v5/release":
 		_ = enc.Encode(f.rels)
 	case r.URL.Path == "/api/v5/manualimport":

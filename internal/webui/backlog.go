@@ -12,14 +12,21 @@ import (
 )
 
 // backlogRetry is how long a target whose SeaDex best is still not downloaded
-// waits before the backlog searches it again.
-const backlogRetry = 7 * 24 * time.Hour
+// waits before the backlog searches it again; backlogShortRetry is the wait
+// when the last search found SeaDex releases the arr rejected, since what the
+// trackers and the feed offer changes from one day to the next (Fruit of
+// Grisaia S1's pack was approved an hour after a search found none).
+const (
+	backlogRetry      = 7 * 24 * time.Hour
+	backlogShortRetry = 24 * time.Hour
+)
 
 // backlogMark is the backlog's last search of one target: the best release it
-// searched for, and when.
+// searched for, when, and whether that search found SeaDex releases.
 type backlogMark struct {
 	Release string    `json:"release"`
 	At      time.Time `json:"at"`
+	Found   bool      `json:"found,omitempty"`
 }
 
 // backlogJob is a target whose SeaDex best is not downloaded, and that best.
@@ -43,7 +50,9 @@ func (st *Store) missingTargets() []backlogJob {
 	var out []backlogJob
 	for i := range st.s.Findings {
 		f := &st.s.Findings[i]
-		if f.Str("status") != "not_downloaded" || unmonitored(f) {
+		// A finding naming no best group has nothing a search can find
+		// (Medaka Box S2: the best is on no tracker the scout can reach).
+		if f.Str("status") != "not_downloaded" || len(bestGroups(*f)) == 0 || unmonitored(f) {
 			continue
 		}
 		t := Target{Arr: f.Str("arr"), ID: int(f.Int("arr_id")), Season: -1}
@@ -80,7 +89,11 @@ func (l *Library) autoBacklog() {
 	marks := make(map[string]backlogMark, len(jobs))
 	for _, j := range jobs {
 		k := j.key()
-		if m, ok := l.backlog[k]; ok && m.Release == j.release && now.Sub(m.At) < backlogRetry {
+		retry := backlogRetry
+		if m, ok := l.backlog[k]; ok && m.Found {
+			retry = backlogShortRetry
+		}
+		if m, ok := l.backlog[k]; ok && m.Release == j.release && now.Sub(m.At) < retry {
 			marks[k] = m
 			continue
 		}
@@ -102,44 +115,103 @@ func (l *Library) autoBacklog() {
 	}
 }
 
-// release is the part of a /release answer whySearchFound reads: Sonarr and
-// Radarr 5 put the verdict under "decision", 3 and 4 at the top.
+// markFound records on the backlog's mark for key whether its last search
+// found SeaDex releases, which shortens the wait before the next one.
+func (l *Library) markFound(key string, found bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if m, ok := l.backlog[key]; ok {
+		m.Found = found
+		l.backlog[key] = m
+	}
+}
+
+// releaseDecision is the part of a /release answer afterNothing reads: Sonarr
+// 5 nests the release and its verdict, Radarr 3 keeps them at the top.
 type releaseDecision struct {
-	CustomFormatScore int `json:"customFormatScore"`
+	DownloadAllowed   *bool `json:"downloadAllowed"`
 	Decision          *struct {
 		Rejections []struct {
 			Reason  string `json:"reason"`
 			Message string `json:"message"`
 		} `json:"rejections"`
+		Approved bool `json:"approved"`
 	} `json:"decision"`
-	Rejections []string `json:"rejections"`
+	Release *struct {
+		GUID      string `json:"guid"`
+		Title     string `json:"title"`
+		IndexerID int    `json:"indexerId"`
+	} `json:"release"`
+	GUID              string   `json:"guid"`
+	Title             string   `json:"title"`
+	Rejections        []string `json:"rejections"`
+	CustomFormatScore int      `json:"customFormatScore"`
+	IndexerID         int      `json:"indexerId"`
+	Approved          bool     `json:"approved"`
 }
 
-// whyNothing reads the arr's verdict on the releases it finds for t now and
-// says why none was grabbed: the rejections of the releases that reach the
-// minimum score (the SeaDex ones), most common first. It runs a second search,
-// so the line calls it only when the scout does not already say t holds the best.
-func (l *Library) whyNothing(ctx context.Context, a *arrAPI, t Target) string {
+func (r *releaseDecision) grabbable() bool {
+	ok := r.Approved
+	if r.Decision != nil {
+		ok = r.Decision.Approved
+	}
+	return ok && (r.DownloadAllowed == nil || *r.DownloadAllowed)
+}
+
+func (r *releaseDecision) ref() (guid, title string, indexer int) {
+	if r.Release != nil {
+		return r.Release.GUID, r.Release.Title, r.Release.IndexerID
+	}
+	return r.GUID, r.Title, r.IndexerID
+}
+
+// nothingVerdict is afterNothing's answer: why the search grabbed nothing,
+// how many SeaDex releases (at the minimum score) the arr found, and the one
+// the scout grabbed itself, if any.
+type nothingVerdict struct {
+	why     string
+	grabbed string
+	seadex  int
+}
+
+// afterNothing reads the arr's verdict on the releases it finds for t now,
+// after a search that grabbed nothing. When the arr approves a SeaDex release
+// its automatic search still skipped (There's No Freaking Way S1: a pack it
+// maps to 17 episodes), the scout grabs the best-scored one itself. Otherwise
+// it says why: the rejections of the SeaDex releases, most common first. It
+// runs a second search, so the line calls it only when the scout does not
+// already say t holds the best.
+func (l *Library) afterNothing(ctx context.Context, a *arrAPI, t Target) nothingVerdict {
 	q := url.Values{}
-	if t.Arr == "radarr" {
+	switch {
+	case t.Arr == "radarr":
 		q.Set("movieId", strconv.Itoa(t.ID))
-	} else {
+	case t.Season < 0:
+		// Sonarr answers 400 for a series without a season.
+		return nothingVerdict{why: "a whole-series search: Sonarr gives its verdict per season only; search a season for the reasons"}
+	default:
 		q.Set("seriesId", strconv.Itoa(t.ID))
-		if t.Season >= 0 {
-			q.Set("seasonNumber", strconv.Itoa(t.Season))
-		}
+		q.Set("seasonNumber", strconv.Itoa(t.Season))
 	}
 	var rels []releaseDecision
 	if err := a.call(ctx, http.MethodGet, "/release?"+q.Encode(), nil, &rels); err != nil {
-		return "could not read the release decisions: " + err.Error()
+		return nothingVerdict{why: "could not read the release decisions: " + err.Error()}
 	}
 	counts := map[string]int{}
-	seadex := 0
-	for _, r := range rels {
+	var v nothingVerdict
+	var pick *releaseDecision
+	for i := range rels {
+		r := &rels[i]
 		if r.CustomFormatScore < l.minScore {
 			continue
 		}
-		seadex++
+		v.seadex++
+		if r.grabbable() {
+			if guid, _, ix := r.ref(); guid != "" && ix > 0 && (pick == nil || r.CustomFormatScore > pick.CustomFormatScore) {
+				pick = r
+			}
+			continue
+		}
 		seen := map[string]bool{}
 		add := func(s string) {
 			if s != "" && !seen[s] {
@@ -156,8 +228,21 @@ func (l *Library) whyNothing(ctx context.Context, a *arrAPI, t Target) string {
 			add(s)
 		}
 	}
-	if seadex == 0 {
-		return fmt.Sprintf("no release reaching score %d among %d found", l.minScore, len(rels))
+	if v.seadex == 0 {
+		v.why = fmt.Sprintf("no release reaching score %d among %d found", l.minScore, len(rels))
+		return v
+	}
+	if pick != nil {
+		guid, title, ix := pick.ref()
+		body := map[string]any{"guid": guid, "indexerId": ix}
+		if err := a.call(ctx, http.MethodPost, "/release", body, nil); err != nil {
+			v.why = fmt.Sprintf("%s approves %q but its search skipped it, and the grab failed: %v", arrName(t.Arr), title, err)
+			return v
+		}
+		v.grabbed = title
+		v.why = fmt.Sprintf("%s approved it but its automatic search skipped it; the scout grabbed it", arrName(t.Arr))
+		l.log.Info("approved SeaDex release grabbed after an empty search", "arr", t.Arr, "arr_id", t.ID, "season", t.Season, "release", title)
+		return v
 	}
 	reasons := make([]string, 0, len(counts))
 	for s := range counts {
@@ -175,8 +260,6 @@ func (l *Library) whyNothing(ctx context.Context, a *arrAPI, t Target) string {
 	for i, s := range reasons {
 		reasons[i] = fmt.Sprintf("%s (%d)", s, counts[s])
 	}
-	if len(reasons) == 0 {
-		return fmt.Sprintf("%d SeaDex releases found and none rejected; the arr may grab on its next pass", seadex)
-	}
-	return fmt.Sprintf("%d SeaDex releases rejected: %s", seadex, strings.Join(reasons, "; "))
+	v.why = fmt.Sprintf("%d SeaDex releases rejected: %s", v.seadex, strings.Join(reasons, "; "))
+	return v
 }

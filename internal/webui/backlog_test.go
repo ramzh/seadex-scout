@@ -48,7 +48,7 @@ func TestAutoBacklogSkipsUnmonitored(t *testing.T) {
 }
 
 // The reasons come from the releases that reach the minimum score only.
-func TestWhyNothingNamesTheSeaDexRejections(t *testing.T) {
+func TestAfterNothingNamesTheSeaDexRejections(t *testing.T) {
 	rej := func(msg string) map[string]any {
 		return map[string]any{"rejections": []map[string]string{{"reason": "x", "message": msg}}}
 	}
@@ -59,12 +59,12 @@ func TestWhyNothingNamesTheSeaDexRejections(t *testing.T) {
 		{"customFormatScore": 0, "decision": rej("Below minimum score")},
 	}}
 	lib := newTestLibrary(t, fake)
-	got := lib.whyNothing(t.Context(), lib.sonarr, Target{Arr: "sonarr", ID: 7, Season: 1})
+	got := lib.afterNothing(t.Context(), lib.sonarr, Target{Arr: "sonarr", ID: 7, Season: 1}).why
 	if !strings.HasPrefix(got, "3 SeaDex releases rejected: Not an upgrade (2); Matches another series (1)") {
 		t.Fatalf("why = %q", got)
 	}
 	fake.rels = fake.rels[3:]
-	if got := lib.whyNothing(t.Context(), lib.sonarr, Target{Arr: "sonarr", ID: 7, Season: 1}); !strings.HasPrefix(got, "no release reaching score 5000 among 1") {
+	if got := lib.afterNothing(t.Context(), lib.sonarr, Target{Arr: "sonarr", ID: 7, Season: 1}).why; !strings.HasPrefix(got, "no release reaching score 5000 among 1") {
 		t.Fatalf("why = %q", got)
 	}
 }
@@ -162,5 +162,39 @@ func TestFixFlagsAltOfANoBestEntry(t *testing.T) {
 	res, err := lib.FixFlags(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 1})
 	if err != nil || res.AltCovers != 1 {
 		t.Fatalf("res = %+v, err %v; want the alt file flagged", res, err)
+	}
+}
+
+// An entry with no obtainable best has nothing to search for.
+func TestAutoBacklogSkipsAnEntryWithNoBestGroup(t *testing.T) {
+	lib := newTestLibrary(t, &fakeSonarr{}, finding("not_downloaded", "", 2))
+	lib.store.monitored.At = time.Now()
+	lib.autoBacklog()
+	if s := lib.Searches(); len(s) != 0 {
+		t.Fatalf("searched an entry with no best: %+v", s)
+	}
+}
+
+// A whole-series search gets no 400 from Sonarr: it is not asked.
+func TestAfterNothingSeriesSearch(t *testing.T) {
+	lib := newTestLibrary(t, &fakeSonarr{})
+	if v := lib.afterNothing(t.Context(), lib.sonarr, Target{Arr: "sonarr", ID: 7, Season: -1}); !strings.HasPrefix(v.why, "a whole-series search") {
+		t.Fatalf("why = %q", v.why)
+	}
+}
+
+// There's No Freaking Way S1: the arr approves a SeaDex release its automatic
+// search skipped; the scout grabs the best-scored approved one.
+func TestAfterNothingGrabsAnApprovedSeaDexRelease(t *testing.T) {
+	approved := func(guid string, score int) map[string]any {
+		return map[string]any{"customFormatScore": score, "downloadAllowed": true,
+			"decision": map[string]any{"approved": true},
+			"release":  map[string]any{"guid": guid, "indexerId": 3, "title": "[Headpatter] " + guid}}
+	}
+	fake := &fakeSonarr{rels: []map[string]any{approved("a", 5000), approved("b", 5001), approved("c", 0)}}
+	lib := newTestLibrary(t, fake)
+	v := lib.afterNothing(t.Context(), lib.sonarr, Target{Arr: "sonarr", ID: 7, Season: 1})
+	if v.grabbed != "[Headpatter] b" || len(fake.grabs) != 1 || fake.grabs[0]["guid"] != "b" || fake.grabs[0]["indexerId"] != float64(3) {
+		t.Fatalf("verdict %+v, grabs %v", v, fake.grabs)
 	}
 }
