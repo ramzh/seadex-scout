@@ -122,8 +122,12 @@ function findingActions(f) {
   if (score) td.append(el("span", { class: "score-badge", title: `Lowest custom format score ${score.min}`, text: `${score.low}/${score.files} below ${lib.scan.min_score}` }));
   if (action === "fix" && score) td.append(actionButton("fix", t, "Fix flags", "Give this season's files from the SeaDex best group the Freeleech25 + Scene flags, so the Seadex custom format scores them"));
   const unmonitored = state.snap ? unmonitoredReason(state.snap)(f) : "";
-  if (unmonitored && a.recommended_group && (t.arr === "radarr" || t.season >= 0)) {
-    td.append(monitorButton(t, a.title || "?", unmonitored));
+  if (unmonitored) {
+    // Sonarr and Radarr never search what is unmonitored: monitor first, and
+    // only where there is something to get.
+    if ((a.recommended_group || a.alt_group) && kindOf(f) !== "atbest" && (t.arr === "radarr" || t.season >= 0)) {
+      td.append(monitorButton(t, a.title || "?", unmonitored));
+    }
   } else if (action === "search") {
     td.append(actionButton("search", t, "Search", `Ask ${arrName(t.arr)} to search ${t.arr === "radarr" ? "this movie" : t.season >= 0 ? "this season" : "this series"} now`));
   }

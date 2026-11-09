@@ -24,10 +24,13 @@ const GRID_FILTERS = [
   ["nobest", "No SeaDex best"],
 ];
 
-// seriesOf groups the findings by series or film, keeping each finding's kind.
-function seriesOf(snap) {
+// seriesOf groups the findings by series or film, keeping each finding's kind;
+// keep, when given, leaves out the findings it refuses (the Library hides
+// unmonitored ones, as the overview does).
+function seriesOf(snap, keep) {
   const out = new Map();
   for (const f of (snap && snap.findings) || []) {
+    if (keep && !keep(f)) continue;
     const a = f.attrs;
     const id = num(a.arr_id);
     if (!id) continue;
@@ -53,6 +56,9 @@ function seriesOf(snap) {
 function cardPair(s) {
   const top = s.findings.slice().sort((x, y) => CARD_KINDS[x.kind].rank - CARD_KINDS[y.kind].rank)[0];
   const a = top ? top.f.attrs : {};
+  // On a pick (by group, or proven by import): Sonarr may name the group
+  // otherwise than SeaDex, so an arrow would read as an upgrade.
+  if (top && top.kind === "atbest") return { held: (a.current_group || "–").split(",")[0], best: "", same: true };
   const held = a.status === "not_downloaded" ? "Nothing" : (a.current_group || "–").split(",")[0];
   const best = a.recommended_group || (a.alt_group ? `${a.alt_group} (alt)` : "");
   return { held, best, same: best && held.toLowerCase() === best.toLowerCase() };
@@ -60,7 +66,7 @@ function cardPair(s) {
 
 // ---------- Library grid ----------
 
-const grid = { filter: "", built: null, series: null };
+const grid = { filter: "", built: null, key: "", series: null };
 
 function gridFilterOf(kind) {
   if (kind === "upgrade" || kind === "groups") return "need";
@@ -70,16 +76,16 @@ function gridFilterOf(kind) {
 function renderGrid() {
   const snap = state.snap;
   if (!snap) return;
-  if (grid.built !== snap) {
-    grid.series = seriesOf(snap);
-    grid.built = snap;
-  }
   const q = $("grid-search").value.trim().toLowerCase();
   const arr = $("grid-arr").value;
   const showUnmonitored = $("grid-unmonitored").checked;
-  const unmonitored = unmonitoredTest(snap);
-  const all = [...grid.series.values()].filter((s) => (!arr || s.arr === arr) &&
-    (showUnmonitored || s.findings.some(({ f }) => !unmonitored(f))));
+  if (grid.built !== snap || grid.key !== String(showUnmonitored)) {
+    const unmonitored = unmonitoredTest(snap);
+    grid.series = seriesOf(snap, showUnmonitored ? null : (f) => !unmonitored(f));
+    grid.built = snap;
+    grid.key = String(showUnmonitored);
+  }
+  const all = [...grid.series.values()].filter((s) => !arr || s.arr === arr);
   const counts = { "": all.length };
   for (const s of all) counts[gridFilterOf(s.kind)] = (counts[gridFilterOf(s.kind)] || 0) + 1;
   $("grid-chips").replaceChildren(...GRID_FILTERS.map(([id, label]) => el("button", {

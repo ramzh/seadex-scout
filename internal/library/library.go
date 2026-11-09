@@ -279,3 +279,8 @@ func sameItem(a, b *Item) bool {
 func sameOrder(a, b *Order) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
+
+// CanonRangedOnly prefixes a CanonTitles value Sonarr files right only with
+// an episode range ("<title> S02E13-E24"): its whole-season form reads as part
+// of the season, because Sonarr's scene mapping splits it.
+const CanonRangedOnly = "~"

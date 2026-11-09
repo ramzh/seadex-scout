@@ -81,7 +81,7 @@ type sonarrSeries struct {
 func SonarrSceneTitles(client *http.Client, baseURL, apiKey string) SceneTitleSource {
 	base := strings.TrimRight(baseURL, "/") + "/api/v3"
 	var mu sync.Mutex
-	verdicts := map[string]bool{}
+	verdicts := map[string]string{} // "" none, canonExact, canonRanged
 	get := func(ctx context.Context, path string, out any) error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, http.NoBody)
 		if err != nil {
@@ -99,8 +99,8 @@ func SonarrSceneTitles(client *http.Client, baseURL, apiKey string) SceneTitleSo
 		return json.NewDecoder(io.LimitReader(resp.Body, maxSceneBody)).Decode(out)
 	}
 	// filesAs reports whether Sonarr parses title as exactly the episodes of
-	// season of series id.
-	filesAs := func(ctx context.Context, title string, id, season, episodes int) (bool, error) {
+	// season of series id, and whether it at least names series id.
+	filesAs := func(ctx context.Context, title string, id, season, episodes int) (exact, series bool, err error) {
 		var p struct {
 			Series *struct {
 				ID int `json:"id"`
@@ -110,17 +110,20 @@ func SonarrSceneTitles(client *http.Client, baseURL, apiKey string) SceneTitleSo
 			} `json:"episodes"`
 		}
 		if err := get(ctx, "/parse?title="+url.QueryEscape(title), &p); err != nil {
-			return false, err
+			return false, false, err
 		}
-		if p.Series == nil || p.Series.ID != id || len(p.Episodes) != episodes {
-			return false, nil
+		if p.Series == nil || p.Series.ID != id {
+			return false, false, nil
+		}
+		if len(p.Episodes) != episodes {
+			return false, true, nil
 		}
 		for _, e := range p.Episodes {
 			if e.SeasonNumber != season {
-				return false, nil
+				return false, true, nil
 			}
 		}
-		return true, nil
+		return true, true, nil
 	}
 	return func(ctx context.Context) (map[int]SeriesScene, error) {
 		var series []sonarrSeries
@@ -152,20 +155,30 @@ func SonarrSceneTitles(client *http.Client, baseURL, apiKey string) SceneTitleSo
 				}
 				q := fmt.Sprintf("%s S%02d", title, se.SeasonNumber)
 				key := fmt.Sprintf("%d|%d|%s", s.ID, n, q)
-				ok, seen := verdicts[key]
+				verdict, seen := verdicts[key]
 				if !seen {
-					var err error
 					// A failed parse is not remembered, so the next walk asks again.
-					if ok, err = filesAs(ctx, q, s.ID, se.SeasonNumber, n); err != nil {
+					exact, series, err := filesAs(ctx, q, s.ID, se.SeasonNumber, n)
+					if err != nil {
 						continue
 					}
-					verdicts[key] = ok
+					switch {
+					case exact:
+						verdict = title
+					case series:
+						// Sonarr's scene mapping splits the season (Durarara!!
+						// S2: "(2010) S02" reads as its first 12 of 36), but the
+						// title still names the series, and "<title> S02E13-E24"
+						// files exactly those episodes.
+						verdict = library.CanonRangedOnly + title
+					}
+					verdicts[key] = verdict
 				}
-				if ok {
+				if verdict != "" {
 					if sc.Canon == nil {
 						sc.Canon = map[int]string{}
 					}
-					sc.Canon[se.SeasonNumber] = title
+					sc.Canon[se.SeasonNumber] = verdict
 				}
 			}
 			out[s.ID] = sc

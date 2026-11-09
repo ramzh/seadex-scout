@@ -47,7 +47,9 @@ func TestSonarrSceneTitlesKeepsOnlyParsedCanonTitles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got[1].Canon[1] != "Golden Boy (1995)" || got[2].Canon != nil {
+	// Sonarr names Kyousougiga but files no episode for "(2013) S01": the
+	// title is kept for episode-range copies only.
+	if got[1].Canon[1] != "Golden Boy (1995)" || got[2].Canon[1] != "~Kyousougiga (2013)" {
 		t.Fatalf("canon = %v / %v", got[1].Canon, got[2].Canon)
 	}
 	if len(got[2].Titles) != 1 || got[2].Titles[0].Season != 2 {
