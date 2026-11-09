@@ -1572,13 +1572,24 @@ func (l *Library) ImportQueued(ctx context.Context, arr string, id int, dry bool
 				filmGood = a.name == "radarr" && !(bestGrab && l.seasonBelowBest(a.name, owner, -1))
 			}
 		}
+		// A file imported from this very download is already what it
+		// brings: importing it again only deletes and re-creates it, every
+		// 30 minutes while the download stays queued (Durarara!!x2 Part 3's
+		// two specials, 15 times).
+		fromHere := map[int]bool{}
+		if hashes, err := l.importHashes(ctx, a, owner); err == nil {
+			for fid, h := range hashes {
+				fromHere[fid] = strings.EqualFold(h, rec.DownloadID)
+			}
+		}
 		// A score at the minimum is no proof the file is the SeaDex best:
 		// older grabs carry the best flags on alts too. When this download
 		// is a best grab and the scout says the season is not at the best,
 		// its files replace what is there.
 		for _, r := range rows {
 			for _, e := range r.Episodes {
-				if goodFile[e.EpisodeFileID] && !(bestGrab && l.seasonBelowBest(a.name, owner, e.SeasonNumber)) {
+				if fromHere[e.EpisodeFileID] ||
+					goodFile[e.EpisodeFileID] && !(bestGrab && l.seasonBelowBest(a.name, owner, e.SeasonNumber)) {
 					good[e.ID] = true
 				}
 			}

@@ -297,3 +297,30 @@ func TestDigestSaysWhatHappened(t *testing.T) {
 		t.Fatal("a second digest with nothing new is not empty")
 	}
 }
+
+// Durarara!!x2 Part 3: a file this queued download already put in place is
+// never imported from it again, whatever the scout says of the season.
+func TestImportQueuedSkipsFilesFromTheSameDownload(t *testing.T) {
+	ep := func(id, file int) map[string]any { return map[string]any{"id": id, "episodeFileId": file} }
+	fake := &fakeSonarr{
+		queue: []map[string]any{{"id": 5, "seriesId": 7, "downloadId": "ABC", "outputPath": "/data/pack", "sizeLeft": 0}},
+		history: []map[string]any{
+			{"eventType": "grabbed", "downloadId": "ABC", "data": map[string]string{"indexerFlags": "Scene, Freeleech25"}},
+			{"eventType": "downloadFolderImported", "downloadId": "ABC", "data": map[string]string{"fileId": "101"}},
+		},
+		files: []map[string]any{{"id": 101, "customFormatScore": 0}},
+		rows: []map[string]any{
+			{"path": "/data/pack/26.mkv", "series": map[string]int{"id": 7}, "episodes": []any{ep(1, 101)}},
+			{"path": "/data/pack/27.mkv", "series": map[string]int{"id": 7}, "episodes": []any{ep(2, 0)}},
+		},
+	}
+	lib := newTestLibrary(t, fake)
+	res, err := lib.ImportQueued(t.Context(), "sonarr", 5, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, _ := fake.cmds[0]["files"].([]any)
+	if res.Files != 1 || len(files) != 1 || files[0].(map[string]any)["path"] != "/data/pack/27.mkv" {
+		t.Fatalf("result %+v, files %v; want only the episode with no file", res, files)
+	}
+}
