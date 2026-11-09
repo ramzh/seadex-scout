@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="app.css">
 <script src="app.js" defer></script>
 <script src="library.js" defer></script>
+<script src="series.js" defer></script>
 </head>
 <body>
 <div class="shell">
@@ -22,7 +23,8 @@
 
 <nav class="tabs" role="tablist" aria-label="Sections" aria-orientation="vertical">
   <button role="tab" data-tab="overview" aria-selected="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg><span class="tab-label">Overview</span><span id="badge-overview" class="badge" hidden></span></button>
-  <button role="tab" data-tab="library"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2v12M7 2v12M10.5 2.5l3 11"/></svg><span class="tab-label">Library</span><span id="badge-library" class="badge" hidden></span></button>
+  <button role="tab" data-tab="grid"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2v12M7 2v12M10.5 2.5l3 11"/></svg><span class="tab-label">Library</span></button>
+  <button role="tab" data-tab="library"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 13.5h11M4 11V7M8 11V3.5M12 11V9"/></svg><span class="tab-label">Scores</span><span id="badge-library" class="badge" hidden></span></button>
   <button role="tab" data-tab="queue"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 13.5h10"/></svg><span class="tab-label">Queue</span><span id="badge-queue" class="badge" hidden></span></button>
   <button role="tab" data-tab="torrents"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h10l-1 9.5H4z"/><path d="M6 4V2.5h4V4"/></svg><span class="tab-label">Torrents</span><span id="badge-torrents" class="badge" hidden></span></button>
   <button role="tab" data-tab="activity"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8h3l2-5 2 10 2-5h3"/></svg><span class="tab-label">Activity</span></button>
@@ -122,7 +124,29 @@
     </div>
   </section>
 
-  <!-- Library -->
+  <!-- Library grid (series.js) -->
+  <section id="tab-grid" class="tab-panel" hidden>
+    <div class="grid-tools">
+      <div id="grid-chips" class="chip-row" role="group" aria-label="Status"></div>
+      <div class="controls">
+        <input id="grid-search" type="search" placeholder="Title or release group" title="Press / to jump here" aria-label="Filter by title or release group">
+        <select id="grid-arr" aria-label="App"><option value="">Sonarr and Radarr</option><option value="sonarr">Sonarr</option><option value="radarr">Radarr</option></select>
+        <label class="toggle"><input id="grid-unmonitored" type="checkbox"> Show unmonitored</label>
+      </div>
+    </div>
+    <p class="muted small"><span id="grid-count" class="count"></span> series and films the scout compared with SeaDex. Open one for its seasons, what SeaDex picks, and what to do.</p>
+    <div id="grid-cards" class="series-grid"></div>
+    <p id="grid-empty" class="empty" hidden></p>
+  </section>
+
+  <!-- Series page (series.js) -->
+  <section id="tab-series" class="tab-panel" hidden>
+    <a href="#grid" class="back-link">← Library</a>
+    <header id="series-head" class="series-head"></header>
+    <div id="series-body" class="series-layout"></div>
+  </section>
+
+  <!-- Scores -->
   <section id="tab-library" class="tab-panel" hidden>
     <div class="kpis">
       <div class="kpi"><span class="kpi-label">Files below <span id="lib-min">5000</span></span><span id="lib-kpi-low" class="kpi-value">–</span><span id="lib-kpi-low-sub" class="kpi-sub"></span></div>
@@ -409,19 +433,6 @@
   </div>
 </dialog>
 
-<dialog id="series-dialog" class="usenet-dialog">
-  <div class="card-head">
-    <h2 id="series-title">Series</h2>
-    <button id="series-close" type="button" aria-label="Close">✕</button>
-  </div>
-  <p id="series-sub" class="muted small"></p>
-  <div class="table-wrap">
-    <table id="series-rows" class="data">
-      <thead><tr><th>Season</th><th>Scout says</th><th>You have</th><th>SeaDex best</th><th class="num">Below min</th><th>Actions</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</dialog>
 
 <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
 

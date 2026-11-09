@@ -669,3 +669,118 @@ button.legend-item.selected { color: var(--text); border-color: var(--divider); 
   .hero { gap: 18px; }
   .ring { width: 104px; height: 104px; }
 }
+
+/* ---------- Library grid and series page (series.js) ---------- */
+.mono { font-family: var(--mono); }
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.status-pill.k-atbest { background: var(--good-bg); color: var(--good); }
+.status-pill.k-upgrade { background: color-mix(in srgb, var(--bar-unlisted) 18%, transparent); color: var(--bar-unlisted); }
+.status-pill.k-missing { background: var(--warn-bg); color: var(--warn); }
+.status-pill.k-groups { background: color-mix(in srgb, var(--bar-alt) 18%, transparent); color: var(--bar-alt); }
+.status-pill.k-nobest { background: var(--surface-2); color: var(--muted); }
+
+.grid-tools { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+}
+.chip:hover { color: var(--text); background: var(--surface-2); }
+.chip.selected { color: var(--text); background: var(--surface-2); border-color: var(--divider); }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+.chip-n { font-family: var(--mono); font-size: 12px; opacity: 0.8; }
+
+.series-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+.series-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 150px;
+  padding: 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 150px;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.series-card:hover { text-decoration: none; border-color: var(--divider); transform: translateY(-1px); }
+.series-card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.series-card-title { font-weight: 500; line-height: 1.35; }
+.pair { margin-top: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--text); }
+.pair .grp { padding: 3px 7px; border-radius: 6px; background: var(--surface-2); }
+.pair .grp.best { background: var(--good-bg); color: var(--good); }
+.pair .arrow { color: var(--muted); }
+.pair .size { margin-left: auto; }
+
+.back-link { display: inline-flex; align-items: center; min-height: 36px; color: var(--muted); font-size: 13px; }
+.series-head { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 20px; }
+.series-badges, .series-links { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.series-title { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.btn-link:hover { text-decoration: none; background: var(--surface-2); }
+
+.series-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 16px; align-items: start; }
+.series-main, .series-side { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+.season-card h3, .series-side h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.season-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
+.season-head h3 { margin-right: auto; }
+.compare { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: stretch; }
+.compare .arrow.big { align-self: center; color: var(--muted); font-size: 18px; }
+.side { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 10px; background: var(--surface-2); min-width: 0; }
+.side.best { background: var(--good-bg); }
+.side-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.side.best .side-label { color: var(--good); }
+.side-group { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
+.side .links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.season-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.season-card > p { margin: 10px 0 0; }
+
+.timeline { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.timeline li { display: grid; grid-template-columns: 70px 1fr; gap: 10px; padding-left: 14px; position: relative; }
+.timeline li::before { content: ""; position: absolute; left: 0; top: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--bar-other); }
+.timeline li.found::before { background: var(--warn); }
+.timeline li.resolved::before { background: var(--good); }
+.timeline .when { color: var(--muted); }
+blockquote.notes { margin: 12px 0 0; padding: 12px 14px; border-radius: 10px; background: var(--surface-2); color: var(--text); font-size: 13px; line-height: 1.6; white-space: pre-line; }
+
+@media (max-width: 900px) {
+  .series-layout { grid-template-columns: minmax(0, 1fr); }
+  .compare { grid-template-columns: minmax(0, 1fr); }
+  .compare .arrow.big { transform: rotate(90deg); justify-self: center; }
+  .series-title { font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) { .series-card { transition: none; } .series-card:hover { transform: none; } }
+
+.timeline .sub { display: block; color: var(--muted); font-size: 12px; }
+body[data-tab="series"] .page-head h1 { display: none; }
+.season-actions .act-btn { min-height: 36px; padding: 0 14px; font-size: 13px; border-radius: 9px; }
+.season-actions .score-badge { padding: 4px 9px; }

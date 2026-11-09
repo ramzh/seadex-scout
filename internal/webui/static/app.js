@@ -192,13 +192,26 @@ function initTheme() {
 }
 
 function showTab(name) {
-  if (!document.getElementById("tab-" + name)) name = "overview";
+  // A series page is "series:<arr>:<id>", under the Library section.
+  const series = /^series:(sonarr|radarr):(\d+)$/.exec(name);
+  const hash = name;
+  if (series) {
+    state.series = { arr: series[1], id: Number(series[2]) };
+    name = "series";
+  } else if (name === "series" || !document.getElementById("tab-" + name)) name = "overview";
   state.tab = name;
+  document.body.dataset.tab = name;
+  const section = name === "series" ? "grid" : name;
   for (const b of document.querySelectorAll(".tabs button")) {
-    b.setAttribute("aria-selected", String(b.dataset.tab === name));
+    b.setAttribute("aria-selected", String(b.dataset.tab === section));
   }
   for (const p of document.querySelectorAll(".tab-panel")) p.hidden = p.id !== "tab-" + name;
-  if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+  if (series) {
+    if (location.hash !== "#" + hash) history.replaceState(null, "", "#" + hash);
+    window.scrollTo(0, 0);
+    if (typeof renderSeries === "function") renderSeries(state.series.arr, state.series.id); // series.js
+  } else if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+  if (name === "grid" && typeof renderGrid === "function") renderGrid();
   if (name === "log") loadLogs();
   if (name === "reports") loadReports();
   if (typeof onTabShown === "function") onTabShown(name); // library.js
@@ -344,6 +357,8 @@ function render() {
   }));
 
   renderOverview(snap);
+  if (state.tab === "grid" && typeof renderGrid === "function") renderGrid();
+  if (state.tab === "series" && state.series && typeof renderSeries === "function") renderSeries(state.series.arr, state.series.id);
   renderActivity(snap);
   renderHealth(snap);
   if (state.tab === "reports") renderReportJob(snap.report_job);
