@@ -241,10 +241,10 @@ func (l *Library) followSearch(ctx context.Context, j SearchJob) SearchJob {
 	j.State = "nothing"
 	if len(grabs) > 0 {
 		j.State = "grabbed"
-	} else if f, ok := l.store.findingFor(j.Target); !ok || f.Str("status") != "at_best" {
-		j.Message = l.whyNothing(ctx, a, j.Target)
-	} else {
+	} else if fs := l.store.findingsFor(j.Target); len(fs) > 0 && !slices.ContainsFunc(fs, func(f Line) bool { return f.Str("status") != "at_best" }) {
 		j.Message = "the library already holds the SeaDex best"
+	} else {
+		j.Message = l.whyNothing(ctx, a, j.Target)
 	}
 	l.log.Info("search finished", "arr", j.Arr, "arr_id", j.ID, "season", j.Season, "title", j.Title, "result", j.State, "grabbed", strings.Join(grabs, " | "), "why", j.Message)
 	return j

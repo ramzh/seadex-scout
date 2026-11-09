@@ -24,6 +24,10 @@ func TestCanonCopyServesTheSonarrTitle(t *testing.T) {
 			t.Errorf("%s: got a copy", name)
 		}
 	}
+	part := item{Title: "[figged] Soul Eater S01 E27-E51 (BluRay 720p AVC Opus) [Dual-Audio]", GUID: "g2"}
+	if _, ok := canonCopy(&part, curationVerdict{canon: "Soul Eater (2008)", rangeLabel: "S01", nonFilm: true}, requesterTV); ok {
+		t.Error("a part of the season got a whole-season copy")
+	}
 	if _, ok := canonCopy(&it, v, requesterMovies); ok {
 		t.Error("a Radarr request got a canonical copy")
 	}

@@ -14,6 +14,9 @@ const canonFragment = "canon"
 var (
 	leadingGroup = regexp.MustCompile(`^\s*\[[^\]]+\]\s*`)
 	trailingTags = regexp.MustCompile(`(?:\s*\[[^\]]*\])+\s*$`)
+	// namedEpisodes is an episode or a number range in a title: "E27-E51",
+	// "S01E05", "01-12", "01~12".
+	namedEpisodes = regexp.MustCompile(`(?i)(?:\bS\d{1,2})?E\d{1,4}\b|\b\d{1,4}\s*[-~]\s*\d{1,4}\b`)
 )
 
 // canonCopy is a series search result again under the title Sonarr's own
@@ -27,6 +30,11 @@ var (
 // ponytail: search results only; the RSS journal keeps its own titles.
 func canonCopy(it *item, v curationVerdict, class requester) (item, bool) {
 	if v.canon == "" || !v.nonFilm || class == requesterMovies || !servedSeason.MatchString(v.rangeLabel) {
+		return item{}, false
+	}
+	// A bare season label beside episodes the title names itself would claim
+	// the whole season for part of it (Soul Eater's figged pack, "S01 E27-E51").
+	if !strings.Contains(v.rangeLabel, "E") && namedEpisodes.MatchString(it.Title) {
 		return item{}, false
 	}
 	title := leadingGroup.FindString(it.Title) + v.canon + " " + v.rangeLabel + trailingTags.FindString(it.Title)
