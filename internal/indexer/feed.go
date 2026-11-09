@@ -73,6 +73,10 @@ type EntryInfo struct {
 	// other season, so a search result under it is not served (misfiledTitle).
 	// Set only when SeasonKnown.
 	MisfiledTitles []string
+	// CanonTitle is "<Sonarr title> (<year>)" when Sonarr's parser files it,
+	// with this Season's token, as that whole season of the series
+	// (library.Item.CanonTitles). Set only when SeasonKnown.
+	CanonTitle string
 }
 
 // MediaKind is what the producer's typing says an entry is. KindUnknown means

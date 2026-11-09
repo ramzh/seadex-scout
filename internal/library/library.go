@@ -77,6 +77,12 @@ type Item struct {
 	// romaji title is mapped to season 2, so its S1 pack under that title is
 	// read as S2). Nil when Sonarr names none or could not be read.
 	SceneTitles []SceneTitle `json:"scene_titles,omitempty"`
+	// CanonTitles are, per season, "<Sonarr title> (<year>)" when Sonarr's own
+	// parser files "<that> SNN" as exactly that season of this series: a
+	// title the feed can always serve a release under, whatever aliases the
+	// tracker used (Golden Boy's "S01 (1995)" matches another series' alias;
+	// "Golden Boy (1995) S01" does not). Nil when none was verified.
+	CanonTitles map[int]string `json:"canon_titles,omitempty"`
 	// AniListIDs are the AniList entries Sonarr links the series to: empty
 	// when it links none, nil on Sonarr 4, which cannot say.
 	AniListIDs []int           `json:"anilist_ids,omitempty"`

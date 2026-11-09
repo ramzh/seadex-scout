@@ -60,6 +60,7 @@ type curatedSignal struct {
 	vote     tvdbVote
 	rev      int // the newest payload version any holder lists
 	misfiled misfiledVote
+	canon    twinVote // the canonical title, folded like the twin title
 	isBest   bool
 	nonFilm  bool
 }
@@ -81,6 +82,7 @@ type curationMatch struct {
 	rng      twinVote
 	vote     tvdbVote
 	misfiled misfiledVote
+	canon    twinVote
 	rev      int
 	isBest   bool
 	nonFilm  bool
@@ -103,6 +105,7 @@ func (m *curationMatch) accept(sig curatedSignal, ok bool) bool {
 	m.twin.merge(sig.twin)
 	m.rng.merge(sig.rng)
 	m.misfiled.add(sig.misfiled.titles)
+	m.canon.merge(sig.canon)
 	m.rev = max(m.rev, sig.rev)
 	return true
 }
@@ -117,6 +120,7 @@ type curationVerdict struct {
 	sonarrTitle string
 	rangeLabel  string
 	misfiled    string
+	canon       string
 	rev         int
 	tvdbID      int
 	isBest      bool
@@ -164,6 +168,7 @@ func (c *curation) lookup(scope, hash, infoURL, guid string) curationVerdict {
 		isBest: match.isBest, matched: match.matched, nonFilm: match.nonFilm,
 		tvdbID: match.vote.resolve(), sonarrTitle: match.twin.resolve(),
 		rangeLabel: match.rng.resolve(), rev: match.rev, misfiled: match.misfiled.titles,
+		canon: match.canon.resolve(),
 	}
 }
 
@@ -554,6 +559,9 @@ func markAndDedupe(raw []item, set *curation, scope string, class requester) (ou
 		}
 		if twin {
 			out = append(out, searchTwin(&it, verdict.sonarrTitle))
+		}
+		if c, ok := canonCopy(&it, verdict, class); ok {
+			out = append(out, c)
 		}
 	}
 	return out, conflicts

@@ -95,6 +95,7 @@ func applyRecordFacts(idx *mapping.Index, rec *mapping.Record, li *match.LibInde
 	}
 	if it != nil && info.SeasonKnown && info.Season > 0 {
 		info.MisfiledTitles = misfiledTitles(it.SceneTitles, info.Season)
+		info.CanonTitle = it.CanonTitles[info.Season]
 	}
 	return it
 }

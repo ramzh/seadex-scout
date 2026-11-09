@@ -233,6 +233,7 @@ func ownershipOf(entries []seadex.Entry, infoFor EntryInfoFunc) map[string][]own
 			if r.NonFilm {
 				r.Range = rangeLabel(t, &info)
 				r.Misfiled = cleanTitles(info.MisfiledTitles)
+				r.Canon = info.CanonTitle
 			}
 			if rev := classify.PayloadRevision(t.Files); rev.Marker == release.RevisionVersion {
 				r.Rev = rev.Version

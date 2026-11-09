@@ -149,6 +149,9 @@ type ownedRelease struct {
 	// title is alphanumeric, so the join is unambiguous and the record stays
 	// comparable). Re-derived every pass.
 	Misfiled string `json:"misfiled,omitempty"`
+	// Canon is EntryInfo.CanonTitle: the title Sonarr files as this owner's
+	// season. Re-derived every pass.
+	Canon string `json:"canon,omitempty"`
 }
 
 // dropUnservableTwin clears the catalogue fields of a persisted record that
@@ -244,6 +247,7 @@ func foldOwnerIntoSignal(acc curatedSignal, r *ownedRelease) curatedSignal {
 	acc.rng.add(r.Range)
 	acc.rev = max(acc.rev, r.Rev)
 	acc.misfiled.add(r.Misfiled)
+	acc.canon.add(r.Canon)
 	return acc
 }
 
