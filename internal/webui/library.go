@@ -766,9 +766,10 @@ func (l *Library) Run(ctx context.Context) {
 			scanned = true
 		}
 		if l.Auto {
-			if scanned {
-				l.autoFix(ctx)
-			}
+			// A SeaDex change shows in the findings within a cycle (15m), so
+			// stale flags come off on the next tick; proven low files wait for
+			// a scan.
+			l.autoFix(ctx, scanned)
 			l.autoImport(ctx)
 		}
 	}
@@ -793,14 +794,18 @@ func (l *Library) importsSince(ctx context.Context, since time.Time) int {
 	return n
 }
 
-// autoFix runs Fix flags on every scanned season that can be proven to hold
-// the best (by import, or by the scout's finding) and on every season or movie
-// SeaDex now has a better release for. A target whose stale flags came off
-// gets a search in line, so the arr grabs the new best: an RSS sync never sees
+// autoFix runs Fix flags on every season or movie SeaDex now has a better
+// release for and, after a scan, on every scanned season that can be proven to
+// hold the best (by import, or by the scout's finding). A target whose stale
+// flags came off gets a search in line, so the arr grabs the new best: an RSS sync never sees
 // a release published before the flags came off.
-func (l *Library) autoFix(ctx context.Context) {
+func (l *Library) autoFix(ctx context.Context, scanned bool) {
 	targets := l.store.betterReleaseTargets()
-	for _, s := range l.Scan().Seasons {
+	var seasons []SeasonScore
+	if scanned {
+		seasons = l.Scan().Seasons
+	}
+	for _, s := range seasons {
 		t := Target{Arr: s.Arr, ID: s.ID, Season: s.Season}
 		if s.Arr == "radarr" {
 			t.Season = -1

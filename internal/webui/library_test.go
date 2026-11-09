@@ -299,6 +299,27 @@ func TestFixFlagsClearsOnlyFlagsSeaDexNoLongerBacks(t *testing.T) {
 	}
 }
 
+// Without waiting for a scan, a better release clears the stale flags and puts
+// one search in line; the next tick finds nothing left to clear.
+func TestAutoFixClearsStaleFlagsAndSearchesOnce(t *testing.T) {
+	fake := &fakeSonarr{files: []map[string]any{
+		{"id": 1, "seasonNumber": 1, "releaseGroup": "Erai-raws", "indexerFlags": sonarrBestFlags},
+	}}
+	f := finding("better_release", "kitsune", 1)
+	f.Attrs["title"] = "Irregular Witch"
+	lib := newTestLibrary(t, fake, f)
+	lib.Best = func(context.Context) (map[string][]int, error) { return map[string][]int{}, nil }
+	lib.autoFix(t.Context(), false)
+	if len(fake.bulk) != 1 || fake.bulk[0]["indexerFlags"] != float64(0) {
+		t.Fatalf("bulk update = %v, want file 1 unflagged", fake.bulk)
+	}
+	fake.files[0]["indexerFlags"] = 0
+	lib.autoFix(t.Context(), false)
+	if s := lib.Searches(); len(s) != 1 || s[0].Target != (Target{Arr: "sonarr", ID: 7, Season: 1}) || s[0].State != "waiting" {
+		t.Fatalf("searches = %+v, want one waiting search for the season", s)
+	}
+}
+
 func TestBestIndexTrustsOnlyPrivateAnimeBytesComments(t *testing.T) {
 	qb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{
