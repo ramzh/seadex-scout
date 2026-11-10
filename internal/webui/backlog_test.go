@@ -42,6 +42,17 @@ func TestAutoBacklogQueuesEachMissingBestOnce(t *testing.T) {
 	}
 }
 
+// A better release is searched too: autoFix only searches one whose stale
+// flags it cleared.
+func TestAutoBacklogSearchesBetterRelease(t *testing.T) {
+	lib := newTestLibrary(t, &fakeSonarr{}, finding("better_release", "reza", 0))
+	lib.store.monitored.At = time.Now()
+	lib.autoBacklog()
+	if s := lib.Searches(); len(s) != 1 || s[0].Target != (Target{Arr: "sonarr", ID: 7, Season: 0}) {
+		t.Fatalf("searches = %+v, want one for season 0", s)
+	}
+}
+
 func TestAutoBacklogSkipsUnmonitored(t *testing.T) {
 	lib := newTestLibrary(t, &fakeSonarr{}, finding("not_downloaded", "escanor", 1))
 	lib.store.monitored = Monitored{At: time.Now(), Unmonitored: []string{"sonarr:7:1"}}
@@ -244,7 +255,9 @@ func TestImportSeedingTakesLowEpisodesFromABestTorrent(t *testing.T) {
 		})
 	}))
 	t.Cleanup(qb.Close)
-	ep := func(id, file int) map[string]any { return map[string]any{"id": id, "episodeFileId": file, "seasonNumber": 2} }
+	ep := func(id, file int) map[string]any {
+		return map[string]any{"id": id, "episodeFileId": file, "seasonNumber": 2}
+	}
 	fake := &fakeSonarr{
 		files: []map[string]any{
 			{"id": 101, "seasonNumber": 2, "releaseGroup": "", "customFormatScore": 0},

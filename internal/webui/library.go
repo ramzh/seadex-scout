@@ -2051,8 +2051,6 @@ func (st *Store) movieForHash(hash string) int {
 	return 0
 }
 
-// findingFor returns the newest pass's finding for the target: the season's
-// own finding when there is one, else the whole series' one.
 // betterReleaseTargets is the seasons and movies whose best flags may be
 // stale: a better_release finding (whole, or for some episodes), or an at_best
 // or newer_revision one that lists a held group beside the best and alt ones.
@@ -2113,6 +2111,8 @@ func (st *Store) findingsFor(t Target) []Line {
 	return out
 }
 
+// findingFor returns the newest pass's finding for the target: the season's
+// own finding when there is one, else the whole series' one.
 func (st *Store) findingFor(t Target) (Line, bool) {
 	st.mu.Lock()
 	defer st.mu.Unlock()

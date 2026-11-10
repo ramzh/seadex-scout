@@ -37,8 +37,11 @@ type backlogJob struct {
 }
 
 // missingTargets lists the monitored seasons, episode ranges and films whose
-// finding says the SeaDex best is not downloaded. An episode range searches
-// its whole season, as the dashboard's button does.
+// finding says the SeaDex best is not downloaded, or that a better one exists.
+// autoFix searches a better_release only when it clears stale flags, so one
+// whose files never carried them (Haganai S00E02, Durarara S00E03: unflagged
+// specials, bests in large batches no RSS sync sees again) waited forever. An
+// episode range searches its whole season, as the dashboard's button does.
 // Nothing is listed until the monitored flags have been read once since the
 // start, so an unmonitored season is never taken for a monitored one.
 func (st *Store) missingTargets() []backlogJob {
@@ -53,7 +56,8 @@ func (st *Store) missingTargets() []backlogJob {
 		f := &st.s.Findings[i]
 		// A finding naming no best group has nothing a search can find
 		// (Medaka Box S2: the best is on no tracker the scout can reach).
-		if f.Str("status") != "not_downloaded" || len(bestGroups(*f)) == 0 || unmonitored(f) {
+		status := f.Str("status")
+		if (status != "not_downloaded" && status != "better_release") || len(bestGroups(*f)) == 0 || unmonitored(f) {
 			continue
 		}
 		t := Target{Arr: f.Str("arr"), ID: int(f.Int("arr_id")), Season: -1}
