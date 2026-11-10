@@ -29,6 +29,19 @@ func barePack() *seadex.Torrent {
 	return t
 }
 
+// scenePack is the LYS1TH3A layout: "Bungo.Stray.Dogs.S01E13.BluRay...", plus
+// creditless extras with a bare season token.
+func scenePack(first, last int) *seadex.Torrent {
+	t := &seadex.Torrent{ReleaseGroup: "LYS1TH3A"}
+	for n := first; n <= last; n++ {
+		t.Files = append(t.Files, seadex.File{Name: fmt.Sprintf("Bungo.Stray.Dogs.S01E%02d.BluRay.1080p.Remux.FLAC2.0.H.264-LYS1TH3A.mkv", n), Length: 1 << 30})
+	}
+	t.Files = append(t.Files,
+		seadex.File{Name: "Extras/Bungo.Stray.Dogs.S01.NCOP2.BluRay.1080p.Remux.FLAC2.0.H.264-LYS1TH3A.mkv", Length: 1 << 28},
+		seadex.File{Name: "Bungo.Stray.Dogs.S01.NCOP2.Episode.14.Version.BluRay.1080p.Remux.FLAC2.0.H.264-LYS1TH3A.mkv", Length: 1 << 28})
+	return t
+}
+
 func epSeq(from, to int) []int {
 	var out []int
 	for n := from; n <= to; n++ {
@@ -68,6 +81,12 @@ func TestSynthesizedPackTitleCarriesItsEpisodeRange(t *testing.T) {
 		{"a part numbered by the series", rangePack("sam", "Dr. STONE - Science Future", 25, 37),
 			EntryInfo{Title: "Dr. STONE", Season: 4, SeasonKnown: true, EpisodeRun: epSeq(25, 37), EpisodeRunSeason: 4},
 			"Dr. STONE S04E25-E37"},
+		{"a later cour named by SxxExx tokens", scenePack(13, 24),
+			EntryInfo{Title: "Bungo Stray Dogs", Season: 1, SeasonKnown: true, EpisodeRun: epSeq(13, 24), EpisodeRunSeason: 1},
+			"Bungo Stray Dogs S01E13-E24"},
+		{"a whole season named by SxxExx tokens stays a season pack", scenePack(1, 24),
+			EntryInfo{Title: "Bungo Stray Dogs", Season: 1, SeasonKnown: true, EpisodeRun: epSeq(13, 24), EpisodeRunSeason: 1},
+			"Bungo Stray Dogs S01"},
 		{"a gap in the run keeps the season label", rangePack("G", "Show", 1, 3),
 			EntryInfo{Title: "Show", Season: 1, SeasonKnown: true, EpisodeRun: []int{1, 2, 5, 6}, EpisodeRunSeason: 1},
 			"Show S01"},

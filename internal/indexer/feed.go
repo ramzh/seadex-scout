@@ -263,6 +263,9 @@ func packEpisodeRange(t *seadex.Torrent, meta *EntryInfo, label string) string {
 	if !ok {
 		first, last, ok = bareNumberSpan(t.Files)
 	}
+	if !ok {
+		first, last, ok = seasonEpisodeSpan(t.Files)
+	}
 	if ok && last > len(run) && last-first+1 == len(run) {
 		// Numbered by the series, not the entry: Dr. STONE S4 part 3 is
 		// "25v2" to "37v2", the entry's own 13 episodes.
@@ -398,6 +401,37 @@ func bareNumberSpan(files []seadex.File) (first, last int, ok bool) {
 			first = n
 		}
 		last = max(last, n)
+	}
+	if len(seen) < 2 || last-first+1 != len(seen) {
+		return 0, 0, false
+	}
+	return first, last, true
+}
+
+// seasonEpisodeSpan is packEpisodeRange's fallback for packs whose files carry
+// SxxExx tokens: Bungo Stray Dogs' second cour from LYS1TH3A is
+// "S01E13" to "S01E24", which Sonarr reads as a bare S01 pack and rejects
+// because E01-E12 are on disk. Every census file with a token must name the
+// same season, one episode each, distinct and contiguous; files with no token
+// (creditless extras) are skipped. The season itself is not used: the entry's
+// run says where the episodes sit.
+func seasonEpisodeSpan(files []seadex.File) (first, last int, ok bool) {
+	seen := map[int]bool{}
+	season := -1
+	for _, f := range payload.Census(files) {
+		s, found := payload.Span(payload.EpisodeKeyBase(f.Name))
+		if !found {
+			continue
+		}
+		if s.Season == payload.AbsoluteSeason || s.First != s.Last || (season >= 0 && s.Season != season) || seen[s.First] {
+			return 0, 0, false
+		}
+		season = s.Season
+		seen[s.First] = true
+		if first == 0 || s.First < first {
+			first = s.First
+		}
+		last = max(last, s.First)
 	}
 	if len(seen) < 2 || last-first+1 != len(seen) {
 		return 0, 0, false
