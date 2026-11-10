@@ -107,10 +107,15 @@ func (l *Library) ImportSeeding(ctx context.Context, t Target) (SeedingImport, e
 				reasons[blocked]++
 				continue
 			}
+			// No downloadId: Sonarr 5's ManualImport dereferences the tracked
+			// download's ImportItem after importing, which is null for a
+			// download it already finished with; the command fails after the
+			// files moved (DanMachi S4: E02-E11 in, best flags lost). An
+			// untracked import keeps the flags.
 			take = append(take, map[string]any{
 				"path": r.Path, "folderName": r.FolderName, "seriesId": t.ID, "episodeIds": ids,
 				"quality": r.Quality, "languages": r.Languages, "releaseGroup": r.ReleaseGroup,
-				"releaseType": r.ReleaseType, "indexerFlags": bestFlags(t.Arr), "downloadId": strings.ToUpper(q.Hash),
+				"releaseType": r.ReleaseType, "indexerFlags": bestFlags(t.Arr),
 			})
 		}
 		if len(take) == 0 {
@@ -134,6 +139,30 @@ func (l *Library) ImportSeeding(ctx context.Context, t Target) (SeedingImport, e
 	}
 	slices.Sort(res.Reasons)
 	return res, nil
+}
+
+// autoSeeding runs ImportSeeding on every monitored Sonarr season the backlog
+// lists, each tick, so a best qBittorrent already holds fills its episodes
+// without a search. A search that "grabs" a pack qBittorrent already has is
+// followed by nothing: Sonarr imported SAO S4 and DanMachi S4 part 1's E01
+// from the grab's name and called the rest unexpected.
+// ponytail: one manualimport scan per seeding best per target per tick; cache
+// the empty answers if the series count grows large.
+func (l *Library) autoSeeding(ctx context.Context) {
+	if l.Qbit == nil {
+		return
+	}
+	for _, j := range l.store.missingTargets() {
+		if ctx.Err() != nil {
+			return
+		}
+		if j.Arr != "sonarr" || j.Season < 0 {
+			continue
+		}
+		if _, err := l.ImportSeeding(ctx, j.Target); err != nil {
+			l.log.Debug("seeding import skipped", "arr_id", j.ID, "season", j.Season, "error", err)
+		}
+	}
 }
 
 // inside reports whether path is root or a file under it: only the torrent's

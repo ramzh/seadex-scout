@@ -248,6 +248,41 @@ func TestMonitorSeasonAndSearch(t *testing.T) {
 // search can only hit qBittorrent's 409. The pack's E01 is imported instead;
 // E02, already at the minimum, is left alone.
 func TestImportSeedingTakesLowEpisodesFromABestTorrent(t *testing.T) {
+	lib, fake := seedingFixture(t)
+	res, err := lib.ImportSeeding(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Files != 1 || res.Torrent != "[-ZR-] Misfit S02" || len(fake.cmds) != 1 {
+		t.Fatalf("res = %+v, cmds %v", res, fake.cmds)
+	}
+	files, _ := fake.cmds[0]["files"].([]any)
+	f0, _ := files[0].(map[string]any)
+	if fake.cmds[0]["name"] != "ManualImport" || len(files) != 1 || f0["indexerFlags"] != float64(sonarrBestFlags) || f0["downloadId"] != nil {
+		t.Fatalf("import command = %v", fake.cmds[0])
+	}
+}
+
+// The tick imports from a seeding best without waiting for a search (SAO S4:
+// the search re-grabbed the pack qBittorrent held, so nothing followed it).
+func TestAutoSeedingImportsMissingTargets(t *testing.T) {
+	lib, fake := seedingFixture(t)
+	lib.store.s.Findings = []Line{finding("not_downloaded", "zr", 2)}
+	lib.autoSeeding(t.Context())
+	if len(fake.cmds) != 0 {
+		t.Fatalf("imported before the monitored flags were read: %v", fake.cmds)
+	}
+	lib.store.monitored.At = time.Now()
+	lib.autoSeeding(t.Context())
+	if len(fake.cmds) != 1 {
+		t.Fatalf("cmds = %v, want one import", fake.cmds)
+	}
+}
+
+// seedingFixture is Misfit S2: -ZR-'s pack seeding complete, E01 below the
+// minimum score, E02 at it, and a library file Sonarr also lists.
+func seedingFixture(t *testing.T) (*Library, *fakeSonarr) {
+	t.Helper()
 	qb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{
 			{"hash": "ZRHASH", "name": "[-ZR-] Misfit S02", "content_path": "/data/torrents/anime/tv/Misfit S02", "progress": 1},
@@ -275,18 +310,7 @@ func TestImportSeedingTakesLowEpisodesFromABestTorrent(t *testing.T) {
 	// seriesId) is never imported.
 	fake.rows = append(fake.rows, map[string]any{"path": "/data/media/anime/tv/Misfit/Season 02/E01.mkv",
 		"series": map[string]int{"id": 7}, "episodes": []map[string]any{ep(1, 101)}})
-	res, err := lib.ImportSeeding(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Files != 1 || res.Torrent != "[-ZR-] Misfit S02" || len(fake.cmds) != 1 {
-		t.Fatalf("res = %+v, cmds %v", res, fake.cmds)
-	}
-	files, _ := fake.cmds[0]["files"].([]any)
-	f0, _ := files[0].(map[string]any)
-	if fake.cmds[0]["name"] != "ManualImport" || len(files) != 1 || f0["indexerFlags"] != float64(sonarrBestFlags) || f0["downloadId"] != "ZRHASH" {
-		t.Fatalf("import command = %v", fake.cmds[0])
-	}
+	return lib, fake
 }
 
 func TestDigestSaysWhatHappened(t *testing.T) {

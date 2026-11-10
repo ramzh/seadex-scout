@@ -951,6 +951,7 @@ func (l *Library) Run(ctx context.Context) {
 			// stale flags come off on the next tick; proven low files wait for
 			// a scan.
 			l.autoFix(ctx, scanned)
+			l.autoSeeding(ctx)
 			l.autoBacklog()
 			l.autoImport(ctx)
 		}
