@@ -309,7 +309,7 @@ function searchState(j) {
     case "waiting": return { text: `In line #${line.indexOf(j) + 1}`, cls: "", detail: "Waiting for its turn (one search a minute)" };
     case "queued": return { text: "Queued…", cls: "info", detail: `${arrName(j.arr)} has the search queued` };
     case "started": return { text: "Searching…", cls: "info", detail: `${arrName(j.arr)} is searching the indexers` };
-    case "grabbed": return { text: "Grabbed ✓", cls: "good", detail: "Grabbed: " + (j.grabbed || []).join(" | ") };
+    case "grabbed": return { text: "Grabbed, importing when done", cls: "good", detail: "Grabbed: " + (j.grabbed || []).join(" | ") };
     case "imported": return { text: "Imported ✓", cls: "good", detail: j.message || "Imported from a torrent already seeding" };
     case "nothing": return { text: "Nothing grabbed", cls: "warn", detail: j.message || "No release the profile accepts was found" };
     case "failed": return { text: "Failed", cls: "bad", detail: j.message || "The search failed" };

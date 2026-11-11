@@ -787,3 +787,7 @@ body[data-tab="series"] .page-head h1 { display: none; }
 .last-search { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .last-why { flex-basis: 100%; color: var(--muted); overflow-wrap: anywhere; }
 .act-btn.monitor { color: var(--warn); border-color: var(--warn); }
+
+/* The to-do table's group headings. */
+table.data tr.section-row td { background: var(--surface-2, rgba(127,127,127,.08)); padding: 10px 8px 6px; border-bottom: 1px solid var(--border); }
+table.data tr.section-row:hover { background: none; }

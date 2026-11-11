@@ -1,6 +1,7 @@
 package compare
 
 import (
+	"fmt"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -1315,5 +1316,39 @@ func TestCompareAniListExcludedEntryEmitsNothing(t *testing.T) {
 	}
 	if n := rec.CountExact(msg); n != 0 {
 		t.Errorf("member logged %d withheld records, want 0", n)
+	}
+}
+
+// The same release on two trackers: the entry's own torrent headlines, not a
+// batch carrying other entries too (Haganai's OVA beside Reza's Nyaa batch).
+func TestRepresentativePrefersTheEntrysOwnTorrent(t *testing.T) {
+	rel := func(tr string, ty tracker.Type) release.Release {
+		return release.Release{Group: "Reza", Tracker: tr, TrackerType: ty, Kind: release.KindEncode, DualAudio: true}
+	}
+	ova := candidate{torrent: seadex.Torrent{Files: []seadex.File{{Name: "[Reza] Haganai - OVA.mkv", Length: 2 << 30}}}, rel: rel("AB", tracker.Private)}
+	var batchFiles []seadex.File
+	for i := 1; i <= 25; i++ {
+		batchFiles = append(batchFiles, seadex.File{Name: fmt.Sprintf("[Reza] Haganai/S%02d/Haganai - %02d.mkv", 1+i/13, i), Length: 2 << 30})
+	}
+	batch := candidate{torrent: seadex.Torrent{Files: batchFiles}, rel: rel("Nyaa", tracker.Public)}
+	if got := representative([]candidate{batch, ova}); got.rel.Tracker != "AB" {
+		t.Fatalf("headline on %s, want the AnimeBytes OVA", got.rel.Tracker)
+	}
+	// Any input order gives one headline (three candidates that a pairwise
+	// size rule would rank in a cycle).
+	files := func(n int) []seadex.File { return batchFiles[:n] }
+	a := candidate{torrent: seadex.Torrent{Files: files(10)}, rel: rel("AB", tracker.Private)}
+	b := candidate{torrent: seadex.Torrent{Files: files(25), InfoHash: "b"}, rel: rel("Nyaa", tracker.Public)}
+	c := candidate{torrent: seadex.Torrent{Files: files(4), InfoHash: "c"}, rel: rel("Nyaa", tracker.Public)}
+	want := representative([]candidate{a, b, c}).torrent.InfoHash
+	for _, order := range [][]candidate{{a, c, b}, {b, a, c}, {b, c, a}, {c, a, b}, {c, b, a}} {
+		if got := representative(order).torrent.InfoHash; got != want {
+			t.Fatalf("headline %q for one order, %q for another", got, want)
+		}
+	}
+	// Same file count: the public tracker still wins.
+	batch.torrent.Files = batchFiles[:1]
+	if got := representative([]candidate{ova, batch}); got.rel.Tracker != "Nyaa" {
+		t.Fatalf("headline on %s, want Nyaa", got.rel.Tracker)
 	}
 }

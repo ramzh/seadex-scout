@@ -77,6 +77,9 @@ func TestPlaceByRun(t *testing.T) {
 	if n := placeByRun(ova, EpisodeRun{Season: 0, First: 7, Last: 7}, 7, eps); n != 1 || placed(ova)[0] != 7 {
 		t.Fatalf("OVA placed %d %v, want S00E07", n, placed(ova))
 	}
+	if ova[0].ReleaseGroup != "Moxie" {
+		t.Fatalf("OVA group %q, want Moxie from its bracket", ova[0].ReleaseGroup)
+	}
 	if n := placeByRun(kyousougiga("OVA - 01-02.mkv"), EpisodeRun{Season: 0, First: 7, Last: 7}, 7, eps); n != 0 {
 		t.Fatalf("a two-episode file for one special placed %d", n)
 	}

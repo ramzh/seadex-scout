@@ -584,7 +584,7 @@ const LIBRARY_BARS = [
   ["have_alt", "At a SeaDex alt", "--bar-alt"],
   ["have_older_revision", "Older version of best", "--bar-older"],
   ["have_unlisted", "Neither best nor alt", "--bar-unlisted"],
-  ["no_file", "Season not found", "--bar-other"],
+  ["no_file", "Not in your library", "--bar-other"],
   ["unverified", "Untagged release", "--bar-other"],
   ["unattributed", "Episode not known", "--bar-other"],
   ["withheld", "Withheld", "--bar-other"],
@@ -709,13 +709,36 @@ function renderFindings(table, list, now, emptyText) {
     const th = el("th", { class: [col.num ? "num" : "", sorted ? "sorted" : "", sorted && sort.asc ? "asc" : ""].join(" ").trim() || null, title: col.title, "data-sort": col.key }, col.label);
     if (col.key) th.addEventListener("click", () => {
       const s = state.sorts[table];
-      state.sorts[table] = s && s.key === col.key ? { key: col.key, asc: !s.asc } : { key: col.key, asc: TEXT_SORTS.has(col.key) };
+      // A third click on a column clears the sort, back to the grouped order.
+      const first = TEXT_SORTS.has(col.key);
+      state.sorts[table] = !s || s.key !== col.key ? { key: col.key, asc: first } : s.asc === first ? { key: col.key, asc: !first } : null;
       renderOverview(state.snap);
     });
     return th;
   })));
-  setRows(tbl.tBodies[0], rows.flatMap((f) => findingRows(f, now)), FINDING_COLUMNS.length, emptyText);
+  // In the default order the to-do table is grouped by kind, each group
+  // headed by what it needs from you.
+  const grouped = table === "upgrades" && !sort;
+  let last = null;
+  setRows(tbl.tBodies[0], rows.flatMap((f) => {
+    const kind = kindOf(f);
+    const out = findingRows(f, now);
+    if (!grouped || kind === last) return out;
+    last = kind;
+    const [label, hint] = SECTIONS[kind] || [kind, ""];
+    const n = rows.filter((g) => kindOf(g) === kind).length;
+    return [el("tr", { class: "section-row" }, el("td", { colspan: FINDING_COLUMNS.length },
+      el("strong", { text: `${label} · ${n}` }), el("span", { class: "muted small", text: " " + hint }))), ...out];
+  }), FINDING_COLUMNS.length, emptyText);
 }
+
+// SECTIONS heads each group of the to-do table: its name and what to do.
+const SECTIONS = {
+  upgrade: ["Upgrades", "A better SeaDex release exists than the files you have. Searches run on their own; Search runs one now."],
+  missing: ["Not downloaded", "SeaDex names a best and the library has no file for it. The scout searches these one a minute and grabs a best no search finds straight into qBittorrent."],
+  groups: ["Group to check", "The files' release group could not be matched to SeaDex: several groups, or a name Sonarr misread. Check them by hand."],
+  nobest: ["No SeaDex best", "SeaDex lists no best for these, only alts. Nothing to do unless you want the alt."],
+};
 
 // findingRows is a finding's row, then one sub-row per further SeaDex best
 // or alt release, filling only the best and alt columns.
@@ -785,6 +808,7 @@ function onDiskTag(a) {
 function findingRow(f, now) {
   const a = f.attrs;
   const why = whyOf(a);
+  const onDisk = onDiskTag(a);
   const newer = a.status === "newer_revision";
   const entry = a.al_id ? SEADEX + a.al_id + "/" : "";
   const bestLinks = releaseLinks(a, "");
@@ -797,7 +821,7 @@ function findingRow(f, now) {
     el("td", {}, link(a.arr_url, a.title || "?"), " ", typeof seriesButton === "function" ? seriesButton(a.arr, num(a.arr_id), a.title || "?") : null,
       el("span", { class: "sub", text: `${arrName(a.arr)} · ${seasonLabel(a)}` })),
     el("td", { class: "num", text: a.status === "not_downloaded" ? "–" : fmtBytes(a.library_bytes) }),
-    el("td", {}, el("span", { class: "tag " + why.cls, text: why.text }), onDiskTag(a)),
+    el("td", {}, ...(onDisk && a.status === "not_downloaded" ? [onDisk] : [el("span", { class: "tag " + why.cls, text: why.text }), onDisk])),
     a.status === "not_downloaded" ? el("td", { text: "–" }) : groupList(a.current_group, newer ? a.current_revision : ""),
     best,
     a.recommended_group ? sizeCell(a.recommended_bytes, changeOf(a, ""), isApprox(a, "")) : el("td", { class: "num", text: "–" }),
@@ -1321,7 +1345,7 @@ const VERDICTS = {
   have_alt: ["At a SeaDex alt", "good"],
   have_older_revision: ["Older version", "warn"],
   have_unlisted: ["Neither best nor alt", "warn"],
-  no_file: ["Season not found", ""],
+  no_file: ["Not in your library", ""],
   unverified: ["Untagged release", ""],
   unattributed: ["Episode not known", ""],
   withheld: ["Withheld", ""],

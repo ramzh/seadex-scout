@@ -310,6 +310,10 @@ func placeByRun(rows []manualImportRow, run EpisodeRun, series int, eps []sonarr
 			return matchRejection(rj.Reason)
 		})
 		r.ReleaseType = "singleEpisode"
+		// A bare name ("[Reza] Haganai - OVA.mkv") parses no group.
+		if m := leadingGroup.FindStringSubmatch(filepath.Base(r.Path)); r.ReleaseGroup == "" && m != nil {
+			r.ReleaseGroup = m[1]
+		}
 	}
 	return len(place)
 }

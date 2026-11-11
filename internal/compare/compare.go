@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/seadex-scout/internal/filter"
 	"github.com/cplieger/seadex-scout/internal/logattr"
 	"github.com/cplieger/seadex-scout/internal/match"
+	"github.com/cplieger/seadex-scout/internal/payload"
 	"github.com/cplieger/seadex-scout/internal/release"
 	"github.com/cplieger/seadex-scout/internal/seadex"
 	"github.com/cplieger/seadex-scout/internal/tagfilter"
@@ -611,7 +612,25 @@ func representative(pool []candidate) candidate {
 			bestIdx = i
 		}
 	}
-	return pool[bestIdx]
+	h := pool[bestIdx]
+	// The same release on another tracker as the entry's own torrent beats a
+	// batch that also carries other entries (Haganai's OVA: AnimeBytes' 2.7 GB
+	// file, not Nyaa's 64 GB batch of both seasons and the OVA), since it is
+	// what gets grabbed and what the size change should say. Applied after
+	// the ranking so the order stays the same whatever the input order.
+	// ponytail: "batch" is twice the files; an entry's own torrent missing
+	// half its episodes would lose to a complete batch, as it should.
+	own, found := h, false
+	for i := range pool {
+		c := &pool[i]
+		if keyOf(c) != keyOf(&h) || strings.EqualFold(c.rel.Tracker, h.rel.Tracker) {
+			continue
+		}
+		if n, nh := len(payload.Census(c.torrent.Files)), len(payload.Census(h.torrent.Files)); n > 0 && 2*n <= nh && (!found || betterCandidate(c, &own)) {
+			own, found = *c, true
+		}
+	}
+	return own
 }
 
 // betterCandidate reports whether a should outrank b as the headline
