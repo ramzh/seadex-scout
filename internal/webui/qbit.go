@@ -93,7 +93,12 @@ func (q *Qbit) AddNyaa(ctx context.Context, view, arr string) (string, error) {
 		return "", errors.New("unknown app")
 	}
 	category := strings.TrimSpace(q.cfg.Categories[arr])
+	return category, q.AddURL(ctx, torrent, category)
+}
 
+// AddURL adds the torrent at a download link under category, signing in when
+// needed. The link may hold a passkey: it is never logged or returned.
+func (q *Qbit) AddURL(ctx context.Context, torrent, category string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	err := q.add(ctx, torrent, category)
@@ -102,7 +107,7 @@ func (q *Qbit) AddNyaa(ctx context.Context, view, arr string) (string, error) {
 			err = q.add(ctx, torrent, category)
 		}
 	}
-	return category, err
+	return err
 }
 
 // Check signs in when needed and returns qBittorrent's version, for the

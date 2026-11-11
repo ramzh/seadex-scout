@@ -150,7 +150,17 @@ type Library struct {
 	// indexer.BestReleases); Qbit resolves AnimeBytes downloads to their
 	// torrent ids. Either may be nil, which only narrows what can be proven.
 	Best func(context.Context) (map[string][]int, error)
+	// Runs returns the episode run of each SeaDex best, keyed like Best, so
+	// an import can place its files by the AniList map. Nil places none.
+	Runs func(context.Context) (map[string]EpisodeRun, error)
 	Qbit *Qbit
+	// DirectCategory is the qBittorrent category a SeaDex best is added
+	// under when a search finds nothing Sonarr will grab (DirectGrab): one
+	// Sonarr does not watch, so Sonarr never imports it by its own reading
+	// of the names. Empty turns direct grabs off. ABPasskey builds the
+	// AnimeBytes download link; without it only Nyaa bests are added.
+	DirectCategory, ABPasskey string
+	directMu                  sync.Mutex
 	// Auto runs the flag fix and the queue import on their own, with the
 	// same rules as the buttons.
 	Auto bool

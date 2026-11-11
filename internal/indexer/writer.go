@@ -258,6 +258,7 @@ func decodeOwnedRelease(d *jsoncap.Decoder, r *ownedRelease, perMap, entries *in
 		return err
 	}
 	r.dropUnservableTwin()
+	r.dropBadRun()
 	return nil
 }
 

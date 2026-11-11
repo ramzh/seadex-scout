@@ -258,6 +258,14 @@ func (l *Library) followSearch(ctx context.Context, j SearchJob) SearchJob {
 		j.Message = v.why
 		if v.grabbed != "" {
 			j.State, j.Grabbed = "grabbed", []string{v.grabbed}
+		} else if l.DirectCategory != "" && j.Arr == "sonarr" && j.Season >= 0 {
+			// Nothing Sonarr will take: the scout adds the best itself.
+			if name, err := l.DirectGrab(ctx, j.Target); err != nil {
+				l.log.Debug("no direct grab", "arr_id", j.ID, "season", j.Season, "error", err)
+			} else if name != "" {
+				j.State, j.Grabbed = "grabbed", []string{name}
+				j.Message = "added to qBittorrent directly: " + name + "; imported by the AniList episode map once complete"
+			}
 		}
 		l.markFound(j.key(), v.seadex > 0 && v.grabbed == "")
 	}

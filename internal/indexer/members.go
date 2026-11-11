@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"cmp"
+	"fmt"
 	"maps"
 	"slices"
 	"strconv"
@@ -152,6 +153,42 @@ type ownedRelease struct {
 	// Canon is EntryInfo.CanonTitle: the title Sonarr files as this owner's
 	// season. Re-derived every pass.
 	Canon string `json:"canon,omitempty"`
+	// Run is EntryInfo.EpisodeRun for a release this owner votes best, as
+	// "<season>:<first>-<last>" (runLabel): entry episode n is TVDB episode
+	// first+n-1 of that season. The dashboard's import places a best's files
+	// by it where Sonarr's scene mapping misreads the names (Kyousougiga's
+	// "- 01" read as S00E02). A string keeps the record comparable.
+	// Re-derived every pass.
+	Run string `json:"run,omitempty"`
+}
+
+// runLabel writes an episode run as "<season>:<first>-<last>", "" unless the
+// run is one contiguous stretch of a positive season.
+// ponytail: contiguous runs only; a run with a gap is left to Sonarr's names.
+func runLabel(season int, run []int) string {
+	if season <= 0 || len(run) == 0 || run[0] <= 0 {
+		return ""
+	}
+	for i, e := range run {
+		if e != run[0]+i {
+			return ""
+		}
+	}
+	return fmt.Sprintf("%d:%d-%d", season, run[0], run[len(run)-1])
+}
+
+// ParseRun reads a runLabel: the season and the TVDB episodes of entry
+// episodes 1..n.
+func ParseRun(s string) (season, first, last int, ok bool) {
+	_, err := fmt.Sscanf(s, "%d:%d-%d", &season, &first, &last)
+	return season, first, last, err == nil && season > 0 && first > 0 && first <= last && fmt.Sprintf("%d:%d-%d", season, first, last) == s
+}
+
+// dropBadRun clears a persisted run the writer cannot have produced.
+func (r *ownedRelease) dropBadRun() {
+	if _, _, _, ok := ParseRun(r.Run); !ok {
+		r.Run = ""
+	}
 }
 
 // dropUnservableTwin clears the catalogue fields of a persisted record that

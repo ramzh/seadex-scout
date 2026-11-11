@@ -56,6 +56,9 @@ const (
 	envQbitPassword       = "SEADEX_SCOUT_QBIT_PASSWORD"
 	envQbitCategorySonarr = "SEADEX_SCOUT_QBIT_CATEGORY_SONARR"
 	envQbitCategoryRadarr = "SEADEX_SCOUT_QBIT_CATEGORY_RADARR"
+	// envQbitCategoryDirect turns on direct grabs (webui.Library.DirectGrab):
+	// a category Sonarr does not watch, on the same filesystem as the library.
+	envQbitCategoryDirect = "SEADEX_SCOUT_QBIT_CATEGORY_DIRECT"
 
 	envProwlarrURL       = "SEADEX_SCOUT_PROWLARR_URL"
 	envProwlarrKey       = "SEADEX_SCOUT_PROWLARR_KEY" // shared with the indexer's ${VAR}
@@ -167,6 +170,23 @@ func (w *webUIRuntime) start(ctx context.Context, cfg *config.Config) func() {
 	library.Qbit = qbit
 	library.Best = func(ctx context.Context) (map[string][]int, error) {
 		return indexer.BestReleases(ctx, config.DefaultIndexerFeedPath)
+	}
+	library.Runs = func(ctx context.Context) (map[string]webui.EpisodeRun, error) {
+		labels, err := indexer.BestRuns(ctx, config.DefaultIndexerFeedPath)
+		runs := make(map[string]webui.EpisodeRun, len(labels))
+		for k, v := range labels {
+			if season, first, last, ok := indexer.ParseRun(v); ok {
+				runs[k] = webui.EpisodeRun{Season: season, First: first, Last: last}
+			}
+		}
+		return runs, err
+	}
+	if qbit != nil {
+		library.DirectCategory = strings.TrimSpace(os.Getenv(envQbitCategoryDirect))
+		library.ABPasskey = cfg.IndexerABPasskey
+		if library.DirectCategory != "" {
+			log.Info("direct grabs of SeaDex bests Sonarr cannot read on", "category", library.DirectCategory)
+		}
 	}
 	library.Auto, _ = strconv.ParseBool(strings.TrimSpace(os.Getenv(envAutoFix)))
 	if library.Auto {

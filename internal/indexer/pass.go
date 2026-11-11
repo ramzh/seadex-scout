@@ -240,6 +240,9 @@ func ownershipOf(entries []seadex.Entry, infoFor EntryInfoFunc) map[string][]own
 				r.Range = rangeLabel(t, &info)
 				r.Misfiled = cleanTitles(info.MisfiledTitles)
 				r.Canon = info.CanonTitle
+				if r.IsBest {
+					r.Run = runLabel(info.EpisodeRunSeason, info.EpisodeRun)
+				}
 			}
 			if rev := classify.PayloadRevision(t.Files); rev.Marker == release.RevisionVersion {
 				r.Rev = rev.Version
