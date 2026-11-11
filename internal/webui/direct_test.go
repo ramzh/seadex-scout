@@ -71,6 +71,18 @@ func TestPlaceByRun(t *testing.T) {
 	if n := placeByRun(cour, EpisodeRun{Season: 1, First: 1, Last: 3}, 7, eps); n != 3 || placed(cour)[0] != 101 {
 		t.Fatalf("numbered past the entry placed %d %v, want S01E01-E03", n, placed(cour))
 	}
+	// A one-episode entry's single file is placed whatever its name numbers
+	// (an OVA as S00E07); two files for it place nothing.
+	ova := kyousougiga("[Moxie] Ao no Exorcist - Kyoto Saga OVA.mkv")
+	if n := placeByRun(ova, EpisodeRun{Season: 0, First: 7, Last: 7}, 7, eps); n != 1 || placed(ova)[0] != 7 {
+		t.Fatalf("OVA placed %d %v, want S00E07", n, placed(ova))
+	}
+	if n := placeByRun(kyousougiga("OVA - 01-02.mkv"), EpisodeRun{Season: 0, First: 7, Last: 7}, 7, eps); n != 0 {
+		t.Fatalf("a two-episode file for one special placed %d", n)
+	}
+	if n := placeByRun(kyousougiga("OVA - 01.mkv", "OVA - 02.mkv"), EpisodeRun{Season: 0, First: 7, Last: 7}, 7, eps); n != 0 {
+		t.Fatalf("two files for one special placed %d", n)
+	}
 	// Only Sonarr's rejections of its own match go.
 	kept := kyousougiga("S - 01.mkv")
 	_ = json.Unmarshal([]byte(`[{"reason":"Not an upgrade for existing episode file(s)"},{"reason":"Sample"}]`), &kept[0].Rejections)
@@ -205,5 +217,29 @@ func TestDirectGrab(t *testing.T) {
 	}
 	if _, err := lib.DirectGrab(t.Context(), Target{Arr: "sonarr", ID: 7, Season: 2}); err == nil {
 		t.Fatal("grabbed for a season the finding is not about")
+	}
+}
+
+// A specials season holds one best per OVA: every missing one is added, and
+// one qBittorrent holds is left.
+func TestDirectGrabAddsEverySpecial(t *testing.T) {
+	a, b, c := finding("not_downloaded", "moxie", 0), finding("not_downloaded", "moxie", 0), finding("at_best", "moxie", 0)
+	a.Attrs["info_hash"], a.Attrs["nyaa_url"] = "AA", "https://nyaa.si/view/11"
+	b.Attrs["info_hash"], b.Attrs["nyaa_url"] = "BB", "https://nyaa.si/view/12"
+	c.Attrs["info_hash"], c.Attrs["nyaa_url"] = "CC", "https://nyaa.si/view/13"
+	lib := newTestLibrary(t, &fakeSonarr{}, a, b, c)
+	d := &directQbit{}
+	lib.Qbit, lib.DirectCategory = d.serve(t), "anime-tv-imported"
+	lib.Runs = func(context.Context) (map[string]EpisodeRun, error) {
+		return map[string]EpisodeRun{"aa": {Season: 0, First: 11, Last: 11}, "bb": {Season: 0, First: 12, Last: 12}, "cc": {Season: 0, First: 13, Last: 13}}, nil
+	}
+	target := Target{Arr: "sonarr", ID: 7, Season: 0}
+	if name, err := lib.DirectGrab(t.Context(), target); err != nil || len(d.added) != 2 || !strings.Contains(name, "; ") {
+		t.Fatalf("added %v (%q, %v), want both missing OVAs", d.added, name, err)
+	}
+	d.torrents = []map[string]any{{"hash": "aa"}}
+	d.added = nil
+	if _, err := lib.DirectGrab(t.Context(), target); err != nil || len(d.added) != 1 || d.added[0] != "https://nyaa.si/download/12.torrent|anime-tv-imported" {
+		t.Fatalf("added %v (%v), want only the OVA qBittorrent lacks", d.added, err)
 	}
 }

@@ -162,11 +162,23 @@ type ownedRelease struct {
 	Run string `json:"run,omitempty"`
 }
 
+// specialsRun is the season-0 run of an entry that is specials: its TVDB
+// specials, one per entry episode, or the one special a single file can
+// only be. nil when the map does not answer every entry episode.
+// ponytail: assumes entry order follows TVDB order, as AniDB's lists do.
+func specialsRun(info *EntryInfo) []int {
+	eps := info.SpecialEpisodes
+	if len(eps) == 0 || info.SpecialsEpisodes != len(eps) && (len(eps) != 1 || info.SpecialsEpisodes != 0) {
+		return nil
+	}
+	return eps
+}
+
 // runLabel writes an episode run as "<season>:<first>-<last>", "" unless the
-// run is one contiguous stretch of a positive season.
+// run is one contiguous stretch of one season (0 for specials).
 // ponytail: contiguous runs only; a run with a gap is left to Sonarr's names.
 func runLabel(season int, run []int) string {
-	if season <= 0 || len(run) == 0 || run[0] <= 0 {
+	if season < 0 || len(run) == 0 || run[0] <= 0 {
 		return ""
 	}
 	for i, e := range run {
@@ -181,7 +193,7 @@ func runLabel(season int, run []int) string {
 // episodes 1..n.
 func ParseRun(s string) (season, first, last int, ok bool) {
 	_, err := fmt.Sscanf(s, "%d:%d-%d", &season, &first, &last)
-	return season, first, last, err == nil && season > 0 && first > 0 && first <= last && fmt.Sprintf("%d:%d-%d", season, first, last) == s
+	return season, first, last, err == nil && season >= 0 && first > 0 && first <= last && fmt.Sprintf("%d:%d-%d", season, first, last) == s
 }
 
 // dropBadRun clears a persisted run the writer cannot have produced.

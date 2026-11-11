@@ -242,6 +242,9 @@ func ownershipOf(entries []seadex.Entry, infoFor EntryInfoFunc) map[string][]own
 				r.Canon = info.CanonTitle
 				if r.IsBest {
 					r.Run = runLabel(info.EpisodeRunSeason, info.EpisodeRun)
+					if r.Run == "" {
+						r.Run = runLabel(0, specialsRun(&info))
+					}
 				}
 			}
 			if rev := classify.PayloadRevision(t.Files); rev.Marker == release.RevisionVersion {

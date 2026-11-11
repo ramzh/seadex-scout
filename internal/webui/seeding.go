@@ -235,9 +235,9 @@ func runOf(q QbitTorrent, runs map[string]EpisodeRun) (EpisodeRun, bool) {
 // S00E02, Grisaia no Rakuen's S02 to S00E07). The numbers in the names count
 // the entry's episodes from 1, or the files are exactly the entry's episodes
 // in order, numbered from the run's own first episode or from past the entry
-// (a second cour numbered "13"-"24"). A repeated number, a 0, a file holding
-// several episodes, a number the run cannot place, or an episode Sonarr does
-// not have leaves every row as Sonarr read it: a guess shifted by one would
+// (a second cour numbered "13"-"24"); a one-episode entry's single file needs
+// no number. A repeated number, a 0, a file holding several episodes, a
+// number the run cannot place, or an episode Sonarr does not have leaves every row as Sonarr read it: a guess shifted by one would
 // put every file on the wrong episode. Sonarr's rejections of its own match
 // go; the others (a sample, a locked file) stay. It returns how many rows it
 // placed.
@@ -246,11 +246,20 @@ func placeByRun(rows []manualImportRow, run EpisodeRun, series int, eps []sonarr
 	nums := map[int]int{} // row -> the number in its name
 	seen := map[int]bool{}
 	lo, hi := 0, 0
+	var videos []int
 	for i, r := range rows {
-		if !episodeVideo(QbitFile{Name: cmp.Or(r.RelativePath, filepath.Base(r.Path)), Size: r.Size}) {
-			continue
+		if episodeVideo(QbitFile{Name: cmp.Or(r.RelativePath, filepath.Base(r.Path)), Size: r.Size}) {
+			videos = append(videos, i)
 		}
-		name := filepath.Base(r.Path)
+	}
+	// A one-episode entry's one file is that episode, whatever its name
+	// numbers: an OVA is "Kyoto Saga OVA" or "- 12.5", rarely "- 01".
+	if n == 1 && len(videos) == 1 && !severalEpisodes(filepath.Base(rows[videos[0]].Path)) {
+		nums[videos[0]], lo, hi = 1, 1, 1
+		videos = nil
+	}
+	for _, i := range videos {
+		name := filepath.Base(rows[i].Path)
 		v, ok := fileNumber(name)
 		if !ok || v < 1 || seen[v] || severalEpisodes(name) {
 			return 0

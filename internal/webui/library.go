@@ -2152,6 +2152,27 @@ func (st *Store) findingFor(t Target) (Line, bool) {
 	return Line{}, false
 }
 
+// seasonFindings returns the newest pass's findings for a Sonarr season:
+// every one of the season's own (specials hold one per OVA), else
+// findingFor's.
+func (st *Store) seasonFindings(t Target) []Line {
+	st.mu.Lock()
+	var out []Line
+	for _, f := range st.s.Findings {
+		if scope := f.Str("scope"); f.Str("arr") == t.Arr && int(f.Int("arr_id")) == t.ID &&
+			(scope == "season" || scope == "episodes") && int(f.Int("season")) == t.Season {
+			out = append(out, f)
+		}
+	}
+	st.mu.Unlock()
+	if len(out) == 0 {
+		if f, ok := st.findingFor(t); ok {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // fileNumber is the episode number a file name carries: an SxxEyy episode,
 // else the last bare number before the bracketed tags.
 func fileNumber(name string) (int, bool) {
